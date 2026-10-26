@@ -1,0 +1,57 @@
+name: stocklock
+
+x-application: &application
+  build:
+    dockerfile: dockerfile
+    target: dev
+  env_file:
+    - .env
+  environment:
+    STOCKLOCK_DATABASE_URL: ${STOCKLOCK_CONTAINER_DATABASE_URL:?Set a database URL using the postgres hostname}
+    SERVICE_HOST: 0.0.0.0
+
+services:
+  stocklock:
+    <<: *application
+    ports:
+      - 8000:8000
+    volumes:
+      - ./stocklock:/base/stocklock
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  migrate:
+    <<: *application
+    command: ["uv", "run", "--no-sync", "alembic", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  expiration:
+    <<: *application
+    command: ["uv", "run", "--no-sync", "python", "-m", "stocklock.infrastructure.workers.expiration"]
+    restart: unless-stopped
+    stop_grace_period: 35s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  postgres:
+    image: postgres:18
+    ports:
+      - ${POSTGRES_PORT:-5432}:5432
+    healthcheck:
+      interval: 2s
+      retries: 10
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      timeout: 2s
+    volumes:
+      - pgdata:/var/lib/postgresql
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-stocklock}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-stocklock}
+
+volumes:
+  pgdata:

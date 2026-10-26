@@ -1,0 +1,156 @@
+# StockLock agent guide
+
+## Project scope
+
+StockLock is a monolithic inventory and time-limited reservation service with a
+hexagonal architecture. Keep business rules independent of HTTP, persistence,
+and dependency injection frameworks.
+
+This document describes required behavior and development conventions, not a
+claim that all features are implemented. The current repository contains domain
+entities, repository interfaces, ORM models, configuration, and an application
+bootstrap; several service, adapter, and application files are still scaffolding.
+
+## Functional requirements
+
+### Products and inventory
+
+- Create a product with an initial stock quantity.
+- List products with their current available stock.
+- Retrieve product details and available stock.
+- Adjust product details.
+- Adjust available stock for administrative inventory corrections.
+- Retrieve reservations associated with a product.
+
+### Reservations
+
+- Reserve a positive quantity of a product for a limited period of time.
+- Retrieve a reservation's status, quantity, and expiration time.
+- Cancel an active reservation and return its reserved units to available stock.
+- List all reservations, optionally filtered by status.
+- List a product's reservations, optionally filtered by status.
+
+### Confirmations
+
+- Confirm an active reservation before it expires.
+- Retrieve the confirmation result when one exists.
+- Return the existing result for repeated successful confirmation requests.
+
+## Inventory and transaction invariants
+
+- Product reservation must be atomic: decrement available stock and create the
+  reservation within one database transaction, or persist neither change.
+- Available stock must never be negative. Competing transactions must not reserve
+  more units than are available. Use database-level concurrency control, such as
+  row locks or a conditional atomic update; a separate read followed by an
+  unprotected write is insufficient.
+- Initial stock must be nonnegative; reservation quantities must be positive.
+  Administrative stock corrections must preserve the nonnegative stock invariant
+  and participate in the same concurrency controls as reservations.
+- Reservation states are `active`, `confirmed`, `expired`, and `cancelled`, as
+  defined in `stocklock/shared/enums.py`. Terminal states must not return to active.
+- Only an active, unexpired reservation may be confirmed. Treat a reservation as
+  expired when the current time is greater than or equal to `expires_at`, even if
+  an expiration cleanup process has not yet changed its stored status.
+- Reserving removes units from available stock. Confirmation consumes the held
+  units without decrementing available stock a second time.
+- Repeated or concurrent confirmations for the same reservation must not create
+  duplicate purchases or confirmations, or consume stock again. Enforce one
+  confirmation per reservation in the database as well as in application logic.
+- Cancellation and expiration may restore a reservation's units only once.
+  Transition the reservation state and restore stock in the same transaction,
+  conditional on the reservation still being active.
+- Confirmation, cancellation, and expiration must coordinate on the same
+  reservation so only one terminal transition succeeds under concurrency.
+- Use timezone-aware UTC timestamps consistently for expiration comparisons and
+  persistence. Define transaction boundaries in the application layer and provide
+  database transaction support through infrastructure adapters.
+
+## HTTP API contract
+
+Paths below are the requested resource paths. Keep any version prefix consistent
+with the API router configuration.
+
+| Method | Path | Behavior |
+| --- | --- | --- |
+| POST | `/products` | Create a product with an initial stock quantity. |
+| GET | `/products` | List products and their current available stock. |
+| GET | `/products/{product_id}` | Retrieve product details and available stock. |
+| PATCH | `/products/{product_id}/stock` | Adjust available stock for an administrative inventory correction. |
+| GET | `/products/{product_id}/reservations` | List a product's reservations, optionally filtered by status. |
+| POST | `/products/{product_id}/reservations` | Atomically reserve a requested quantity for a limited time. |
+| GET | `/reservations/{reservation_id}` | Retrieve status, quantity, and expiration time. |
+| POST | `/reservations/{reservation_id}/cancel` | Cancel an active reservation and return its stock. |
+| GET | `/reservations` | List reservations, optionally filtered by status. |
+| POST | `/reservations/{reservation_id}/confirm` | Confirm an active reservation before expiration. |
+| GET | `/reservations/{reservation_id}/confirmation` | Retrieve the confirmation result, if available. |
+
+Editing product details is a functional requirement, but its endpoint is not yet
+specified. Do not treat the stock correction endpoint as a general product edit.
+Request/response schemas, error codes, reservation lifetime policy, and whether
+stock corrections use an absolute quantity or a delta also require explicit API
+decisions when implemented.
+
+## Architecture and current folder structure
+
+```text
+main.py                              # Process entry point
+stocklock/
+  bootstrap.py                       # FastAPI application factory / composition root
+  api/v1/
+    router.py                        # API routing
+    handlers/                        # HTTP inbound adapters
+    schemas/                         # Request and response schemas
+  application/
+    commands/                        # Application input models
+    usecases/                        # Workflow orchestration and transaction boundaries
+  domain/
+    entities/                        # Product, Reservation, Confirmation
+    services/                        # Domain rules spanning entities
+    ports/repositories/              # Repository abstractions
+  infrastructure/
+    models/                          # SQLAlchemy ORM models
+    repositories/                    # Persistence adapters implementing domain ports
+  project/configs/                   # Service configuration
+  shared/                            # Shared primitives, enums, and utilities
+    sqlalchemy/                      # Persistence-specific shared helpers
+migrations/                          # Alembic migration environment and revisions
+```
+
+- Follow hexagonal architecture: HTTP adapters invoke use cases; use cases depend
+  on domain entities and ports; infrastructure implements those ports.
+- Apply the Repository pattern. Keep SQLAlchemy queries, sessions, locking, and
+  ORM-to-domain mapping inside persistence adapters.
+- Use application use cases to coordinate repositories and domain operations.
+  Keep HTTP handlers thin and translate application outcomes into HTTP responses.
+- Apply DDD: express stock, reservation lifecycle, and confirmation rules in domain
+  language. Keep domain entities separate from ORM models and transport schemas.
+- Apply SOLID principles, especially single responsibility and dependency
+  inversion. Extend existing abstractions when needed to preserve atomic workflows.
+- Keep FastAPI, SQLAlchemy, and wireup imports out of the domain. Persistence
+  helpers under `shared/sqlalchemy/` remain infrastructure concerns despite their
+  shared location.
+- Configure dependency injection at the composition boundary using wireup; avoid
+  service location inside business logic.
+
+## Technology and development conventions
+
+- Python 3.13 or newer; FastAPI; PostgreSQL; SQLAlchemy; wireup.
+- Existing supporting dependencies include asyncpg, Alembic, pydantic-settings,
+  Uvicorn, and uuid6. Treat `pyproject.toml` and `uv.lock` as the dependency sources
+  of truth. The stack may grow as the project requires.
+- Preserve asynchronous repository interfaces and the existing UUID identifier
+  conventions.
+- Follow `ruff.toml`: two-space indentation, double quotes, and a 120-character
+  line length.
+- Add Alembic migrations for persistence schema changes, including constraints
+  needed for nonnegative stock and unique reservation confirmations.
+- Validate stock and reservation races against PostgreSQL using independent
+  transactions. Cover oversubscription, repeated/concurrent confirmation,
+  cancellation versus expiration, confirmation versus expiration, and rollback
+  when a multi-step operation fails.
+- Keep domain rule tests independent of web and database frameworks. Exercise HTTP
+  validation and response behavior at the API boundary when implementing endpoints.
+- Do not assume scaffolded modules or missing test tooling are operational. Report
+  the checks actually run and any relevant gaps.
+- Keep credentials and local environment secrets out of documentation and commits.

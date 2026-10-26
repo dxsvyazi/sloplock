@@ -1,0 +1,30 @@
+[project]
+name = "stock-lock"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "alembic>=1.20.0",
+    "asyncpg>=0.32.0",
+    "fastapi>=0.146.0",
+    "pydantic>=2.14.1",
+    "pydantic-settings>=2.16.0",
+    "sqlalchemy[asyncio]>=2.1.5",
+    "uuid6>=2025.0.1",
+    "uvicorn>=0.54.0",
+    "wireup>=2.13.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "ruff>=0.17.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
