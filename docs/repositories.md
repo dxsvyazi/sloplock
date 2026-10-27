@@ -16,18 +16,29 @@ into handlers/use cases; do not resolve services inside business logic.
 
 ## Operations
 
-- Products: `create`, `find_by_id`, `find_many`, `update_details`, `set_stock`,
-  `adjust_stock`. `update_details` patches only supplied fields. `set_stock`
-  sets an absolute available quantity, matching `CorrectProductStockCommand`.
+- Products: `create`, `find_by_id`, `find_many`, `save_details`,
+  `active_held_quantity`, `save_stock`, `adjust_stock`. The use case locks the
+  product, captures a snapshot, and invokes its domain method. The service
+  compares the snapshot and passes changed domain field names to `save_details`;
+  the adapter maps only those values and the entity's update timestamp into SQL.
+  No-op saves skip the write. `save_stock` persists an absolute available quantity
+  and entity timestamp after the use case validates correction headroom.
   `adjust_stock` atomically adds a signed delta, returning `None` for a missing
   product or a result outside `0..2**31-1`. Neither operation replaces stock
-  using a previously read entity.
+  using a stale, unlocked entity. `adjust_stock` explicitly uses a database
+  timestamp; `_update` does not inject a competing timestamp.
 - Reservations: `create`, `find_by_id`, `find_by_key`, `find_many`,
-  `current_time`, `transition`. Lists optionally filter by product and status.
-  `transition` accepts only confirmed/expired/cancelled targets, and succeeds
+  `current_time`, `save_transition`. Lists optionally filter by product and status.
+  `save_transition` accepts an already mutated, locked entity and its previous
+  status. It accepts only confirmed/expired/cancelled targets, and succeeds
   only from active. Confirmation requires `now < expires_at`; expiration
   requires `now >= expires_at`. Cancellation releases any stored active hold,
   including an overdue one. Ineligible or missing transitions return `None`.
+  The use case fetches with `for_update=True`, snapshots the status, reads
+  authoritative time after locking, and invokes the entity transition. The
+  service compares statuses and passes the entity and previous status to the
+  adapter. Conditional write guards remain in the adapter; it does not mutate
+  domain entities.
 - Confirmations: `create_or_find` (`create` remains a compatibility entry point),
   `find_by_reservation_id`. Creation requires a
   confirmed reservation and returns the original result on repeated calls.
@@ -53,7 +64,8 @@ Use individual application classes for operations involving multiple services:
 - `ConfirmReservationUseCase.execute(command)` locks the reservation, transitions
   it while eligible, and creates or returns its unique confirmation.
 - `CancelReservationUseCase.execute(command)` and
-  `ExpireReservationUseCase.execute(command)` transition the reservation and
+  `ExpireReservationUseCase.execute(command)` (or worker cleanup via
+  `TryExpireReservationUseCase.execute(command)`) transition the reservation and
   return its units. Only the winning transition returns stock; overflow rolls
   back the state change as well.
 
@@ -62,7 +74,7 @@ repositories. See [services and use cases](services.md) for commands, return val
 errors, and the full set of product/query flows.
 
 The repository primitives deliberately do not start transactions or coordinate
-other repositories. Calling `create` or `transition` alone does not perform the
+other repositories. Calling `create` or `save_transition` alone does not perform the
 related stock/confirmation work. Future use cases must keep those related
 changes inside the same unit of work, as the supplied workflows do.
 
@@ -70,7 +82,8 @@ changes inside the same unit of work, as the supplied workflows do.
 
 The supported baseline is PostgreSQL `READ COMMITTED`. Conditional stock updates
 serialize on the product row and recheck their bounds after contention. Absolute
-stock corrections and detail patches use that same row's update lock. Concurrent
+stock corrections and detail patches acquire that same row's update lock in their
+use cases before taking snapshots and mutating entities. Concurrent
 absolute corrections take effect in database lock order; a correction replaces
 the available quantity at that point, irrespective of historical totals.
 
@@ -126,10 +139,13 @@ These changes provide persistence and application workflows; HTTP handlers and a
 
 ## Correction headroom and due selection
 
-`set_stock` locks the product and then sums all stored active holds in a separate
-statement. At READ COMMITTED, that statement observes reservations committed
+`CorrectProductStockUseCase` locks the product and then requests
+`active_held_quantity`, which sums all stored active holds in a separate statement.
+At READ COMMITTED, that statement observes reservations committed
 while the product lock was awaited. It rejects corrections whose available
-quantity plus active held quantity exceeds the supported stock range. It never
+quantity plus active held quantity exceeds the supported stock range, delegating
+this rule to `Product.correct_stock(quantity, held_quantity=held)` before
+`save_stock` persists the result. The query never
 locks reservation rows, preserving terminal operations' reservation-first order.
 Raw SQL and incomplete repository-only workflows remain outside this guarantee.
 

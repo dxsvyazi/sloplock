@@ -41,9 +41,9 @@ quantity, and idempotency key. The application receives a framework-independent
 `ReservationTimePolicy`. Inside its transaction, it locks the product, checks for
 a retry, holds stock, and reads PostgreSQL `clock_timestamp()`. This reading is
 both `created_at` and the base for calculating `expires_at`. A failed calculation
-or insert rolls back the stock hold. Domain creation also supports direct callers
-that supply an explicit deadline; those callers own lifetime policy and must hold
-stock in the same transaction.
+or insert rolls back the stock hold. Direct callers construct a validated `Reservation` with explicit creation and
+expiration timestamps, then pass it to `ReservationService.create(reservation)`;
+those callers own lifetime policy and must hold stock in the same transaction.
 
 Changing settings affects new containers and new holds. Existing deadlines are
 persisted and never recomputed. Matching idempotent retries return the original
