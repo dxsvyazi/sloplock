@@ -23,3 +23,7 @@ class ConfirmationConflict(StaticException):
 
 class ServerTimeUnavailable(StaticException):
   message = "Unable to get time from server"
+
+
+class EntityUpdateConflict(StaticException):
+  message = "The locked entity was not found during persistence"

@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Query
 from wireup import Injected
 
 from stocklock.api.v1.mappers import reservation as mapper
@@ -11,7 +11,7 @@ from stocklock.api.v1.schemas.reservation import (
   ListReservationsRequest,
   ReservationResponse,
 )
-from stocklock.application.usecases.reservations import (
+from stocklock.application.usecases.reservation import (
   CancelReservationUseCase,
   ExpireReservationUseCase,
   GetReservationUseCase,
@@ -58,19 +58,9 @@ async def get_reservation(reservation_id: UUID, usecase: Injected[GetReservation
 
 @router.post("/reservations/{reservation_id}/cancel")
 async def cancel_reservation(reservation_id: UUID, usecase: Injected[CancelReservationUseCase]) -> ReservationResponse:
-  reservation = await usecase.execute(mapper.cancel_request_to_command(reservation_id))
-
-  if reservation is None:
-    raise HTTPException(status_code=409, detail="Reservation does not exist or is no longer active")
-
-  return mapper.domain_to_response(reservation)
+  return mapper.domain_to_response(await usecase.execute(mapper.cancel_request_to_command(reservation_id)))
 
 
 @router.post("/reservations/{reservation_id}/expire")
 async def expire_reservation(reservation_id: UUID, usecase: Injected[ExpireReservationUseCase]) -> ReservationResponse:
-  reservation = await usecase.execute(mapper.expire_request_to_command(reservation_id))
-
-  if reservation is None:
-    raise HTTPException(status_code=409, detail="Reservation does not exist or is not eligible for expiration")
-
-  return mapper.domain_to_response(reservation)
+  return mapper.domain_to_response(await usecase.execute(mapper.expire_request_to_command(reservation_id)))

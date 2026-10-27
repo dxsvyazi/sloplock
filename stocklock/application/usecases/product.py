@@ -8,8 +8,8 @@ from stocklock.application.commands.product import (
   UpdateProductCommand,
 )
 from stocklock.application.ports.uow import IUnitOfWork
-from stocklock.domain.entities.product import Product
-from stocklock.domain.ports.repositories.product_repository import ProductDetailsPatch
+from stocklock.domain.entities.product import Product, ProductDetailsPatch
+from stocklock.domain.ports.repositories.product_repository import ProductDetailsSnapshot, ProductStockSnapshot
 from stocklock.domain.services.product_service import ProductService
 
 
@@ -20,7 +20,9 @@ class CreateProductUseCase:
 
   async def execute(self, command: CreateProductCommand) -> Product:
     async with self.uow.begin():
-      return await self.products.create(name=command.name, sku=command.sku, stock_quantity=command.stock_quantity)
+      return await self.products.create(
+        Product(name=command.name, sku=command.sku, stock_quantity=command.stock_quantity)
+      )
 
 
 @dataclass(slots=True)
@@ -58,7 +60,13 @@ class UpdateProductUseCase:
       details["sku"] = command.sku
 
     async with self.uow.begin():
-      return await self.products.update_details(command.product_id, details=details)
+      product = await self.products.require(command.product_id, for_update=True)
+
+      original = ProductDetailsSnapshot.capture(product)
+
+      product.update_details(details)
+
+      return await self.products.save_details(product, original=original)
 
 
 @dataclass(slots=True)
@@ -68,4 +76,10 @@ class CorrectProductStockUseCase:
 
   async def execute(self, command: CorrectProductStockCommand) -> Product:
     async with self.uow.begin():
-      return await self.products.correct_stock(command.product_id, command.stock_quantity)
+      product = await self.products.require(command.product_id, for_update=True)
+
+      original = ProductStockSnapshot.capture(product)
+
+      product.correct_stock(command.stock_quantity, held_quantity=await self.products.active_held_quantity(product.id))
+
+      return await self.products.save_stock(product, original=original)

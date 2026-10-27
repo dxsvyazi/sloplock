@@ -12,7 +12,7 @@ from wireup import AsyncContainer
 from stocklock.application.commands.common import PageCommand
 from stocklock.application.commands.reservation import ExpireReservationCommand
 from stocklock.application.usecases.expiration import ListDueReservationsUseCase
-from stocklock.application.usecases.reservations import ExpireReservationUseCase
+from stocklock.application.usecases.reservation import TryExpireReservationUseCase
 from stocklock.project.configs.time_policy import TimePolicySettings
 from stocklock.project.container import create_container
 
@@ -53,7 +53,7 @@ class ExpirationWorker:
         try:
           async with asyncio.timeout(self.operation_timeout.total_seconds()):
             async with self.container.enter_scope() as scope:
-              expire = await scope.get(ExpireReservationUseCase)
+              expire = await scope.get(TryExpireReservationUseCase)
 
               await expire.execute(ExpireReservationCommand(reservation_id=reservation_id))
         except Exception:

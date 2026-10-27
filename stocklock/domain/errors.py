@@ -14,6 +14,10 @@ class ReservationNotFound(StaticException, NotFound):
   message = "Reservation not found"
 
 
+class ConfirmationNotFound(StaticException, NotFound):
+  message = "Confirmation not found"
+
+
 class InsufficientStock(StaticException):
   message = "Not enough available stock"
 
@@ -23,7 +27,13 @@ class IdempotencyConflict(StaticException):
 
 
 class ReservationUnavailable(DynamicException):
-  pass
+  @staticmethod
+  def not_eligible_for_expire() -> "ReservationUnavailable":
+    return ReservationUnavailable("Reservation is not eligible for expiration")
+
+  @staticmethod
+  def not_active() -> "ReservationUnavailable":
+    return ReservationUnavailable("Reservation is no longer active")
 
 
 class StockLimitExceeded(StaticException):

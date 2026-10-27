@@ -11,7 +11,7 @@ from stocklock.api.v1.mappers.reservation import create_request_to_command
 from stocklock.api.v1.schemas.reservation import CreateReservationRequest
 from stocklock.application.commands.reservation import CreateReservationCommand
 from stocklock.application.policies.reservation import ReservationTimePolicy
-from stocklock.application.usecases.reservations import ReserveProductUseCase
+from stocklock.application.usecases.reservation import ReserveProductUseCase
 from stocklock.domain.entities.product import Product
 from stocklock.domain.entities.reservation import Reservation
 from stocklock.domain.services.product_service import ProductService
@@ -27,7 +27,7 @@ from tests.service_doubles import Products, Reservations, Store
 
 async def seed(store: Store) -> Product:
   async with store.begin():
-    return await ProductService(Products(store)).create(name="Widget", sku="W1", stock_quantity=5)
+    return await ProductService(Products(store)).create(Product(name="Widget", sku="W1", stock_quantity=5))
 
 
 def command(product_id: UUID) -> CreateReservationCommand:
@@ -132,7 +132,7 @@ async def test_postgresql_hold_gets_full_lifetime_after_waiting_for_product_lock
 
   products = ProductService(ProductRepository(database.manager))
   async with database.uow.begin():
-    product = await products.create(name="Widget", sku="W1", stock_quantity=5)
+    product = await products.create(Product(name="Widget", sku="W1", stock_quantity=5))
 
   usecase = ReserveProductUseCase(
     uow=database.uow,

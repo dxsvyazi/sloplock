@@ -1,14 +1,33 @@
 from abc import ABC, abstractmethod
-from typing import NotRequired, TypedDict
+from dataclasses import dataclass
+from datetime import datetime
 from uuid import UUID
 
-from stocklock.domain.entities.product import Product
+from stocklock.domain.entities.product import Product, ProductDetailField
 from stocklock.shared.constraints import DEFAULT_PAGE_SIZE
 
 
-class ProductDetailsPatch(TypedDict):
-  name: NotRequired[str]
-  sku: NotRequired[str]
+@dataclass(frozen=True, slots=True)
+class ProductDetailsSnapshot:
+  id: UUID
+  name: str
+  sku: str
+  updated_at: datetime | None
+
+  @classmethod
+  def capture(cls, product: Product) -> "ProductDetailsSnapshot":
+    return cls(product.id, product.name, product.sku, product.updated_at)
+
+
+@dataclass(frozen=True, slots=True)
+class ProductStockSnapshot:
+  id: UUID
+  stock_quantity: int
+  updated_at: datetime | None
+
+  @classmethod
+  def capture(cls, product: Product) -> "ProductStockSnapshot":
+    return cls(product.id, product.stock_quantity, product.updated_at)
 
 
 class IProductRepository(ABC):
@@ -24,11 +43,21 @@ class IProductRepository(ABC):
   async def create(self, product: Product) -> Product: ...
 
   @abstractmethod
-  async def update_details(self, id: UUID, *, details: ProductDetailsPatch) -> Product | None: ...
+  async def save_details(self, product: Product, *, changed_fields: frozenset[ProductDetailField]) -> Product:
+    """Persist selected details and entity timestamp; caller holds the product lock."""
+    ...
 
   @abstractmethod
-  async def set_stock(self, id: UUID, quantity: int) -> Product | None:
-    """Set available stock, serialized with holds/returns; reject insufficient return capacity."""
+  async def active_held_quantity(self, id: UUID) -> int:
+    """Read active holds after acquiring the product lock, without locking reservations."""
+    ...
+
+  @abstractmethod
+  async def save_stock(self, product: Product) -> Product:
+    """Persist validated stock and entity timestamp; caller holds the product lock.
+
+    Caller must validate return capacity against active_held_quantity in this transaction.
+    """
     ...
 
   @abstractmethod

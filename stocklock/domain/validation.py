@@ -31,19 +31,20 @@ def validate_id(value: UUID) -> None:
 def validate_idempotency_key(value: str) -> str:
   """Validate an opaque, case-sensitive key without changing its identity."""
   validate_text(value, maximum=MAX_IDEMPOTENCY_KEY_LENGTH)
+
   if "\x00" in value:
     raise ValidationException("Idempotency key must not contain NUL")
+
   try:
     encoded = value.encode("utf-8")
   except UnicodeEncodeError as error:
     raise ValidationException("Idempotency key must be valid Unicode") from error
+
   if len(encoded) > MAX_IDEMPOTENCY_KEY_BYTES:
     raise ValidationException(f"Idempotency key must not exceed {MAX_IDEMPOTENCY_KEY_BYTES} UTF-8 bytes")
+
   return value
 
 
-def validate_page(start_id: UUID | None = None, limit: int = DEFAULT_PAGE_SIZE) -> None:
-  if start_id is not None:
-    validate_id(start_id)
-
+def validate_page(limit: int = DEFAULT_PAGE_SIZE) -> None:
   validate_quantity(limit, minimum=1, maximum=MAX_PAGE_SIZE)

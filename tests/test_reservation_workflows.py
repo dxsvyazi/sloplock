@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import event, text
 from sqlalchemy.exc import DBAPIError
 
 from stocklock.domain.entities.product import Product
@@ -14,6 +14,7 @@ from stocklock.infrastructure.repositories.product_repository import ProductRepo
 from stocklock.infrastructure.repositories.reservation_repository import ReservationRepository
 from stocklock.shared.enums import ReservationStatus
 from stocklock.shared.exceptions import ValidationException
+from tests.entity_updates import set_stock, transition, update_details
 from tests.usecase_driver import ReservationDriver
 
 
@@ -33,6 +34,44 @@ async def create_product(database, products, stock=10):
 
 async def reserve(workflows, product, *, key=None, quantity=1):
   return await workflows.reserve(product.id, quantity, key or str(uuid4()))
+
+
+@pytest.mark.parametrize("operation", ["confirm", "cancel", "expire"])
+async def test_terminal_workflow_fetches_locked_reservation_only_once(database, operation):
+  products, reservations, _, workflows = setup_repositories(database)
+  product = await create_product(database, products)
+  item = await reserve(workflows, product, quantity=2)
+  if operation == "expire":
+    async with database.uow.begin():
+      await database.manager.get_session(raises=True).execute(
+        text(
+          "UPDATE reservations SET created_at = clock_timestamp() - interval '2 minutes', "
+          "expires_at = clock_timestamp() - interval '1 minute' WHERE id = :id"
+        ),
+        {"id": item.id},
+      )
+
+  locking_reads = []
+
+  def capture_lock(connection, cursor, statement, parameters, context, executemany):
+    if "FROM reservations" in statement and "FOR UPDATE" in statement and "reservations.quantity" in statement:
+      locking_reads.append(statement)
+
+  event.listen(database.engine.sync_engine, "before_cursor_execute", capture_lock)
+  try:
+    await getattr(workflows, operation)(item.id)
+  finally:
+    event.remove(database.engine.sync_engine, "before_cursor_execute", capture_lock)
+
+  assert len(locking_reads) == 1
+  async with database.uow.begin():
+    expected = {
+      "confirm": ReservationStatus.confirmed,
+      "cancel": ReservationStatus.cancelled,
+      "expire": ReservationStatus.expired,
+    }[operation]
+    assert (await reservations.find_by_id(item.id)).status is expected
+    assert (await products.find_by_id(product.id)).stock_quantity == (8 if operation == "confirm" else 10)
 
 
 async def race(*operations):
@@ -106,8 +145,10 @@ async def test_cancellation_and_expiration_return_stock_only_once(database, expi
     *(lambda: workflows.cancel(item.id) for _ in range(5)),
     *(lambda: workflows.expire(item.id) for _ in range(5)),
   )
-  assert not any(isinstance(result, Exception) for result in results)
-  assert sum(result is not None for result in results) == 1
+  from stocklock.domain.errors import ReservationUnavailable
+
+  assert sum(not isinstance(result, Exception) for result in results) == 1
+  assert sum(isinstance(result, ReservationUnavailable) for result in results) == 9
   async with database.uow.begin():
     assert (await products.find_by_id(product.id)).stock_quantity == 10
     assert (await reservations.find_by_id(item.id)).status in (ReservationStatus.cancelled, ReservationStatus.expired)
@@ -157,7 +198,7 @@ async def test_atomic_deltas_and_partial_details_do_not_lose_updates(database):
 
   async def rename():
     async with database.uow.begin():
-      return await products.update_details(product.id, details={"name": "Renamed"})
+      return await update_details(products, product.id, details={"name": "Renamed"})
 
   results = await race(*(add_stock for _ in range(15)), rename)
   assert not any(isinstance(result, Exception) for result in results)
@@ -172,7 +213,7 @@ async def test_absolute_corrections_serialize_with_reservation(database):
 
   async def correction():
     async with database.uow.begin():
-      return await products.set_stock(product.id, 8)
+      return await set_stock(products, product.id, 8)
 
   results = await race(correction, lambda: reserve(workflows, product, quantity=3))
   assert not any(isinstance(result, Exception) for result in results)
@@ -261,7 +302,7 @@ async def test_confirmation_waiting_on_lock_cannot_confirm_after_expiration(data
       )
       return await usecase.execute(ConfirmReservationCommand(reservation_id=item.id))
     async with ObservedUnitOfWork().begin():
-      return await reservations.transition(item.id, ReservationStatus.confirmed)
+      return await transition(reservations, item.id, ReservationStatus.confirmed)
 
   task = asyncio.create_task(confirmer())
   try:
@@ -330,7 +371,7 @@ async def test_locked_reads_refresh_previously_loaded_orm_rows(database, kind):
       else:
         assert loaded.status is ReservationStatus.active
         assert (await reservations.find_by_id(item.id, for_update=True)).status is ReservationStatus.cancelled
-        assert await reservations.transition(item.id, ReservationStatus.confirmed) is None
+        assert await transition(reservations, item.id, ReservationStatus.confirmed) is None
   finally:
     task.cancel()
     await asyncio.gather(task, return_exceptions=True)
@@ -360,11 +401,8 @@ async def test_terminal_workflows_on_missing_reservation(database, method):
   from stocklock.domain.errors import NotFound
 
   _, _, _, workflows = setup_repositories(database)
-  if method == "confirm":
-    with pytest.raises(NotFound):
-      await workflows.confirm(uuid4())
-  else:
-    assert await getattr(workflows, method)(uuid4()) is None
+  with pytest.raises(NotFound):
+    await getattr(workflows, method)(uuid4())
 
 
 async def test_invalid_reservation_does_not_change_stock(database):

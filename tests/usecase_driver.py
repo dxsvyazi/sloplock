@@ -12,7 +12,7 @@ from stocklock.application.commands.reservation import (
 from stocklock.application.policies.reservation import ReservationTimePolicy
 from stocklock.application.ports.uow import IUnitOfWork
 from stocklock.application.usecases.confirmations import ConfirmReservationUseCase
-from stocklock.application.usecases.reservations import (
+from stocklock.application.usecases.reservation import (
   CancelReservationUseCase,
   ExpireReservationUseCase,
   ReserveProductUseCase,
@@ -54,8 +54,8 @@ class ReservationDriver:
   async def confirm(self, reservation_id: UUID) -> Confirmation:
     return await self.confirm_flow.execute(ConfirmReservationCommand(reservation_id=reservation_id))
 
-  async def cancel(self, reservation_id: UUID) -> Reservation | None:
+  async def cancel(self, reservation_id: UUID) -> Reservation:
     return await self.cancel_flow.execute(CancelReservationCommand(reservation_id=reservation_id))
 
-  async def expire(self, reservation_id: UUID) -> Reservation | None:
+  async def expire(self, reservation_id: UUID) -> Reservation:
     return await self.expire_flow.execute(ExpireReservationCommand(reservation_id=reservation_id))

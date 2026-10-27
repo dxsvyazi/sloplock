@@ -15,7 +15,6 @@ from stocklock.application.commands.reservation import CreateReservationCommand
 from stocklock.domain.entities.reservation import Reservation
 from stocklock.domain.services.reservation_service import ReservationService
 from stocklock.domain.validation import validate_idempotency_key
-from stocklock.infrastructure.repositories.reservation_repository import validate_reservation
 from stocklock.infrastructure.models.product import ProductORM
 from stocklock.infrastructure.models.reservation import ReservationORM
 from stocklock.shared.exceptions import ValidationException
@@ -32,14 +31,10 @@ VALID_KEYS = ["a", "a" * 256, "😀" * 256, "é" * 256, "Key", "key", "a b"]
 def test_invalid_keys_are_rejected_at_every_input_boundary(key):
   with pytest.raises(ValidationException):
     validate_idempotency_key(key)
-  with pytest.raises(ValidationException):
-    CreateReservationCommand(product_id=uuid4(), quantity=1, key=key)
   with pytest.raises(ValidationError):
     CreateReservationRequest(quantity=1, key=key)
   with pytest.raises(ValidationException):
-    validate_reservation(
-      Reservation(product_id=uuid4(), quantity=1, key=key, expires_at=utc_now() + timedelta(minutes=1))
-    )
+    Reservation(product_id=uuid4(), quantity=1, key=key, expires_at=utc_now() + timedelta(minutes=1))
 
 
 @pytest.mark.parametrize("key", VALID_KEYS)
@@ -47,9 +42,8 @@ def test_valid_keys_preserve_exact_identity(key):
   validate_idempotency_key(key)
   assert CreateReservationCommand(product_id=uuid4(), quantity=1, key=key).key == key
   assert CreateReservationRequest(quantity=1, key=key).key == key
-  validate_reservation(
-    Reservation(product_id=uuid4(), quantity=1, key=key, expires_at=utc_now() + timedelta(minutes=1))
-  )
+  reservation = Reservation(product_id=uuid4(), quantity=1, key=key, expires_at=utc_now() + timedelta(minutes=1))
+  assert reservation.key == key
 
 
 @pytest.mark.parametrize("key", INVALID_KEYS)
@@ -58,7 +52,9 @@ async def test_domain_service_rejects_invalid_keys(key):
   with pytest.raises(ValidationException):
     await service.find_retry(uuid4(), key, 1)
   with pytest.raises(ValidationException):
-    await service.create(product_id=uuid4(), quantity=1, key=key, expires_at=utc_now() + timedelta(minutes=1))
+    await service.create(
+      Reservation(product_id=uuid4(), quantity=1, key=key, expires_at=utc_now() + timedelta(minutes=1))
+    )
 
 
 def test_key_limits_are_visible_in_openapi_schema():

@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from wireup import Injected
 
 from stocklock.api.v1.mappers import confirmation as mapper
@@ -19,9 +19,4 @@ async def confirm_reservation(
 
 @router.get("/{reservation_id}/confirmation")
 async def get_confirmation(reservation_id: UUID, usecase: Injected[GetConfirmationUseCase]) -> ConfirmationResponse:
-  confirmation = await usecase.execute(mapper.get_request_to_command(reservation_id))
-
-  if confirmation is None:
-    raise HTTPException(status_code=404, detail="Confirmation not found")
-
-  return mapper.domain_to_response(confirmation)
+  return mapper.domain_to_response(await usecase.execute(mapper.get_request_to_command(reservation_id)))

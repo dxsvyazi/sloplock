@@ -39,8 +39,8 @@ def flows():
     confirmations=ConfirmationService(Confirmations(store)),
   )
   modules = {
-    name: import_module(f"stocklock.application.usecases.{name}")
-    for name in ("products", "reservations", "confirmations")
+    name: import_module(f"stocklock.application.usecases.{module}")
+    for name, module in (("products", "product"), ("reservations", "reservation"), ("confirmations", "confirmations"))
   }
 
   def build(name, *dependencies):
@@ -119,7 +119,8 @@ async def test_release_flow_returns_units_once(flows, name):
   command_type = CancelReservationCommand if name == "CancelReservationUseCase" else ExpireReservationCommand
   command = command_type(reservation_id=item.id)
   assert await flow.execute(command) is not None
-  assert await flow.execute(command) is None
+  with pytest.raises(ReservationUnavailable):
+    await flow.execute(command)
   assert store.products[product.id].stock_quantity == 5
   assert store.confirmations == {}
   with pytest.raises(ReservationUnavailable):
@@ -172,7 +173,7 @@ async def test_expired_confirmation_and_stock_overflow_cannot_partially_transiti
       ConfirmReservationCommand(reservation_id=item.id)
     )
   # Simulate inconsistent legacy data; normal corrections now reserve return capacity.
-  store.products[product.id].stock_quantity = 2**31 - 1
+  store.products[product.id].correct_stock(2**31 - 1)
   with pytest.raises(StockLimitExceeded):
     await build("ExpireReservationUseCase", "products", "reservations").execute(
       ExpireReservationCommand(reservation_id=item.id)
@@ -190,12 +191,10 @@ async def test_reservation_queries_filter_and_page_and_confirmation_may_be_absen
     await build("GetReservationUseCase", "reservations").execute(GetReservationCommand(reservation_id=first.id))
     == first
   )
-  assert (
+  with pytest.raises(NotFound, match="Confirmation not found"):
     await build("GetConfirmationUseCase", "reservations", "confirmations").execute(
       GetConfirmationCommand(reservation_id=first.id)
     )
-    is None
-  )
   await build("CancelReservationUseCase", "products", "reservations").execute(
     CancelReservationCommand(reservation_id=first.id)
   )
@@ -224,7 +223,11 @@ async def test_reservation_queries_filter_and_page_and_confirmation_may_be_absen
 @pytest.mark.parametrize(
   "name, dependencies, command",
   [
+    ("CancelReservationUseCase", ("products", "reservations"), CancelReservationCommand(reservation_id=uuid4())),
+    ("ExpireReservationUseCase", ("products", "reservations"), ExpireReservationCommand(reservation_id=uuid4())),
     ("GetProductUseCase", ("products",), GetProductCommand(product_id=uuid4())),
+    ("UpdateProductUseCase", ("products",), UpdateProductCommand(product_id=uuid4(), name="Renamed")),
+    ("CorrectProductStockUseCase", ("products",), CorrectProductStockCommand(product_id=uuid4(), stock_quantity=0)),
     ("GetReservationUseCase", ("reservations",), GetReservationCommand(reservation_id=uuid4())),
     ("ConfirmReservationUseCase", ("reservations", "confirmations"), ConfirmReservationCommand(reservation_id=uuid4())),
     ("GetConfirmationUseCase", ("reservations", "confirmations"), GetConfirmationCommand(reservation_id=uuid4())),
@@ -244,3 +247,67 @@ async def test_invalid_clock_timestamp_rolls_back_stock_hold(flows):
     await reserve(flows, product.id)
   assert store.products[product.id].stock_quantity == 5
   assert store.reservations == {}
+
+
+@pytest.mark.parametrize(
+  "name,dependencies,command_type,values",
+  [
+    (
+      "CreateProductUseCase",
+      ("products",),
+      CreateProductCommand,
+      {"name": "Widget", "sku": "W1", "stock_quantity": -1},
+    ),
+    ("UpdateProductUseCase", ("products",), UpdateProductCommand, {"name": "bad"}),
+    ("UpdateProductUseCase", ("products",), UpdateProductCommand, {}),
+    ("CorrectProductStockUseCase", ("products",), CorrectProductStockCommand, {"stock_quantity": -1}),
+    ("ReserveProductUseCase", ("products", "reservations"), CreateReservationCommand, {"quantity": 0, "key": "retry"}),
+    ("ReserveProductUseCase", ("products", "reservations"), CreateReservationCommand, {"quantity": 1, "key": " bad "}),
+    ("ListProductsUseCase", ("products",), ListProductsCommand, {"limit": 0}),
+    ("ListReservationsUseCase", ("reservations",), ListReservationsCommand, {"status": "active"}),
+  ],
+)
+async def test_commands_defer_validation_to_execution_without_changing_inventory(
+  flows, name, dependencies, command_type, values
+):
+  store, build = flows
+  product = await seed(flows)
+  values = values.copy()
+  if command_type in (UpdateProductCommand, CorrectProductStockCommand, CreateReservationCommand):
+    values.setdefault("product_id", product.id)
+  command = command_type(**values)
+  with pytest.raises(ValidationException):
+    await build(name, *dependencies).execute(command)
+  assert store.products == {product.id: product}
+  assert store.reservations == {}
+  assert store.confirmations == {}
+  assert not store.active
+
+
+async def test_expiration_before_deadline_raises_without_changing_inventory(flows):
+  store, build = flows
+  product = await seed(flows)
+  item = await reserve(flows, product.id)
+  with pytest.raises(ReservationUnavailable):
+    await build("ExpireReservationUseCase", "products", "reservations").execute(
+      ExpireReservationCommand(reservation_id=item.id)
+    )
+  assert store.reservations[item.id].status is ReservationStatus.active
+  assert store.products[product.id].stock_quantity == 3
+  assert not store.active
+
+
+async def test_cleanup_expiration_skips_missing_ineligible_and_processed_holds(flows):
+  store, build = flows
+  product = await seed(flows)
+  item = await reserve(flows, product.id)
+  flow = build("TryExpireReservationUseCase", "products", "reservations")
+  assert await flow.execute(ExpireReservationCommand(reservation_id=uuid4())) is None
+  command = ExpireReservationCommand(reservation_id=item.id)
+  assert await flow.execute(command) is None
+  assert store.products[product.id].stock_quantity == 3
+  store.now = item.expires_at
+  assert (await flow.execute(command)).status is ReservationStatus.expired
+  assert await flow.execute(command) is None
+  assert store.products[product.id].stock_quantity == 5
+  assert not store.active

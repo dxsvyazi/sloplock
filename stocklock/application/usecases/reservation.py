@@ -11,6 +11,8 @@ from stocklock.application.commands.reservation import (
 from stocklock.application.policies.reservation import ReservationTimePolicy
 from stocklock.application.ports.uow import IUnitOfWork
 from stocklock.domain.entities.reservation import Reservation
+from stocklock.domain.errors import ReservationUnavailable
+from stocklock.domain.ports.repositories.reservation_repository import ReservationSnapshot
 from stocklock.domain.services.product_service import ProductService
 from stocklock.domain.services.reservation_service import ReservationService
 
@@ -36,13 +38,15 @@ class ReserveProductUseCase:
       await self.products.hold_stock(command.product_id, command.quantity)
       created_at = await self.reservations.current_time()
 
-      return await self.reservations.create(
+      reservation = Reservation(
         product_id=command.product_id,
         quantity=command.quantity,
         key=command.key,
         created_at=created_at,
         expires_at=self.time_policy.expiration_for(created_at),
       )
+
+      return await self.reservations.create(reservation)
 
 
 @dataclass(slots=True)
@@ -86,12 +90,21 @@ class CancelReservationUseCase:
   products: ProductService
   reservations: ReservationService
 
-  async def execute(self, command: CancelReservationCommand) -> Reservation | None:
+  async def execute(self, command: CancelReservationCommand) -> Reservation:
     async with self.uow.begin():
-      reservation = await self.reservations.cancel(command.reservation_id)
+      reservation = await self.reservations.require(command.reservation_id, for_update=True)
 
-      if reservation is not None:
-        await self.products.return_stock(reservation.product_id, reservation.quantity)
+      original = ReservationSnapshot.capture(reservation)
+
+      if not reservation.cancel(await self.reservations.current_time()):
+        raise ReservationUnavailable.not_active()
+
+      reservation = await self.reservations.save_transition(reservation, original=original)
+
+      if reservation is None:
+        raise ReservationUnavailable.not_active()
+
+      await self.products.return_stock(reservation.product_id, reservation.quantity)
 
       return reservation
 
@@ -102,9 +115,46 @@ class ExpireReservationUseCase:
   products: ProductService
   reservations: ReservationService
 
+  async def execute(self, command: ExpireReservationCommand) -> Reservation:
+    async with self.uow.begin():
+      reservation = await self.reservations.require(command.reservation_id, for_update=True)
+
+      original = ReservationSnapshot.capture(reservation)
+
+      if not reservation.expire(await self.reservations.current_time()):
+        raise ReservationUnavailable.not_eligible_for_expire()
+
+      reservation = await self.reservations.save_transition(reservation, original=original)
+
+      if reservation is None:
+        raise ReservationUnavailable.not_eligible_for_expire()
+
+      await self.products.return_stock(reservation.product_id, reservation.quantity)
+
+      return reservation
+
+
+@dataclass(slots=True)
+class TryExpireReservationUseCase:
+  """Best-effort cleanup: another transaction may have processed the candidate."""
+
+  uow: IUnitOfWork
+  products: ProductService
+  reservations: ReservationService
+
   async def execute(self, command: ExpireReservationCommand) -> Reservation | None:
     async with self.uow.begin():
-      reservation = await self.reservations.expire(command.reservation_id)
+      reservation = await self.reservations.get(command.reservation_id, for_update=True)
+
+      if reservation is None:
+        return None
+
+      original = ReservationSnapshot.capture(reservation)
+
+      if not reservation.expire(await self.reservations.current_time()):
+        return None
+
+      reservation = await self.reservations.save_transition(reservation, original=original)
 
       if reservation is not None:
         await self.products.return_stock(reservation.product_id, reservation.quantity)

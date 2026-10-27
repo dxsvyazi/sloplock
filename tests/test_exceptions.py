@@ -1,5 +1,4 @@
 from datetime import datetime, timezone
-from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
@@ -48,23 +47,11 @@ def test_fixed_not_found_preserves_workflow_catch_types():
   assert isinstance(error, StockLockError)
 
 
-def test_repeated_validation_uses_same_static_exception_across_layers():
-  from stocklock.application.commands.product import UpdateProductCommand
-  from stocklock.infrastructure.repositories.product_repository import validate_update_details
+def test_empty_product_patch_raises_static_validation_exception():
+  from stocklock.domain.entities.product import Product
   from stocklock.shared.exceptions import MissingProductDetails
 
   with pytest.raises(MissingProductDetails) as caught:
-    validate_update_details({})
+    Product.validate_details({})
   assert isinstance(caught.value, StaticException)
   assert isinstance(caught.value, ValidationException)
-
-  with pytest.raises(MissingProductDetails):
-    UpdateProductCommand(product_id=uuid4())
-
-
-@pytest.mark.parametrize("cursor", ["bad", 123, True])
-def test_invalid_pagination_cursor_is_rejected_without_transport(cursor):
-  from stocklock.application.commands.product import ListProductsCommand
-
-  with pytest.raises(ValidationException, match="UUID"):
-    ListProductsCommand(start_id=cursor)

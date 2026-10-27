@@ -14,6 +14,7 @@ from stocklock.infrastructure.repositories.product_repository import ProductRepo
 from stocklock.shared.enums import ReservationStatus
 from stocklock.shared.exceptions import ValidationException
 from stocklock.shared.utils import utc_now
+from tests.entity_updates import set_stock, transition, update_details
 
 
 def repositories(database):
@@ -24,11 +25,7 @@ def repositories(database):
 
 def reservation(product, **changes):
   return Reservation(
-    product_id=product.id,
-    quantity=2,
-    key=str(uuid4()),
-    expires_at=utc_now() + timedelta(minutes=5),
-    **changes,
+    **(dict(product_id=product.id, quantity=2, key=str(uuid4()), expires_at=utc_now() + timedelta(minutes=5)) | changes)
   )
 
 
@@ -40,14 +37,14 @@ async def test_product_crud_uses_partial_details_and_explicit_stock_operations(d
     assert await products.find_by_id(uuid4()) is None
     assert await products.adjust_stock(product.id, -3) is not None
     assert await products.adjust_stock(product.id, -3) is None
-    changed = await products.update_details(product.id, details={"name": "Renamed"})
+    changed = await update_details(products, product.id, details={"name": "Renamed"})
     assert (changed.name, changed.sku, changed.stock_quantity) == ("Renamed", "W1", 2)
-    assert (await products.set_stock(product.id, 0)).stock_quantity == 0
+    assert (await set_stock(products, product.id, 0)).stock_quantity == 0
     assert (await products.adjust_stock(product.id, 2**31 - 1)).stock_quantity == 2**31 - 1
     assert await products.adjust_stock(product.id, 1) is None
     assert (await products.adjust_stock(product.id, -(2**31 - 1))).stock_quantity == 0
-    assert await products.set_stock(uuid4(), 1) is None
-    assert await products.update_details(uuid4(), details={"sku": "missing"}) is None
+    assert await set_stock(products, uuid4(), 1) is None
+    assert await update_details(products, uuid4(), details={"sku": "missing"}) is None
   async with database.uow.begin():
     assert (await products.find_by_id(product.id)).stock_quantity == 0
     assert len(await products.find_many(limit=1)) == 1
@@ -70,9 +67,7 @@ async def test_reservation_filters_and_irreversible_transitions(database):
   first = Product(name="Widget", sku="W1", stock_quantity=8)
   second = Product(name="Other", sku="W2", stock_quantity=8)
   active = reservation(first)
-  expired = reservation(first)
-  expired.created_at = utc_now() - timedelta(minutes=2)
-  expired.expires_at = utc_now() - timedelta(minutes=1)
+  expired = reservation(first, created_at=utc_now() - timedelta(minutes=2), expires_at=utc_now() - timedelta(minutes=1))
   other = reservation(second)
   async with database.uow.begin():
     for product in (first, second):
@@ -82,18 +77,20 @@ async def test_reservation_filters_and_irreversible_transitions(database):
     assert await reservations.find_by_id(uuid4()) is None
     assert await reservations.find_by_key(first.id, active.key) == active
     assert await reservations.find_by_key(second.id, active.key) is None
-    assert await reservations.transition(expired.id, ReservationStatus.confirmed) is None
-    assert await reservations.transition(active.id, ReservationStatus.expired) is None
-    assert (await reservations.transition(expired.id, ReservationStatus.expired)).status == ReservationStatus.expired
-    assert (await reservations.transition(active.id, ReservationStatus.confirmed)).status == ReservationStatus.confirmed
-    assert await reservations.transition(active.id, ReservationStatus.cancelled) is None
-    assert await reservations.transition(uuid4(), ReservationStatus.cancelled) is None
+    assert await transition(reservations, expired.id, ReservationStatus.confirmed) is None
+    assert await transition(reservations, active.id, ReservationStatus.expired) is None
+    assert (await transition(reservations, expired.id, ReservationStatus.expired)).status == ReservationStatus.expired
+    assert (
+      await transition(reservations, active.id, ReservationStatus.confirmed)
+    ).status == ReservationStatus.confirmed
+    assert await transition(reservations, active.id, ReservationStatus.cancelled) is None
+    assert await transition(reservations, uuid4(), ReservationStatus.cancelled) is None
     result = await confirmations.create(Confirmation(reservation_id=active.id))
     assert await confirmations.create(Confirmation(reservation_id=active.id)) == result
     assert await confirmations.find_by_reservation_id(active.id) == result
     assert await confirmations.find_by_reservation_id(other.id) is None
     with pytest.raises(ValidationException):
-      await reservations.transition(other.id, ReservationStatus.active)
+      await transition(reservations, other.id, ReservationStatus.active)
     with pytest.raises(ValidationException):
       await confirmations.create(Confirmation(reservation_id=other.id))
     assert [r.id for r in await reservations.find_many(product_id=first.id, status=ReservationStatus.expired)] == [
@@ -107,10 +104,11 @@ async def test_reservation_filters_and_irreversible_transitions(database):
 async def test_product_repository_rejects_invalid_stock(database, quantity):
   products = ProductRepository(database.manager)
   async with database.uow.begin():
+    product = await products.create(Product(name="Widget", sku="W1", stock_quantity=0))
     with pytest.raises(ValidationException):
       await products.create(Product(name="Widget", sku="W1", stock_quantity=quantity))
     with pytest.raises(ValidationException):
-      await products.set_stock(uuid4(), quantity)
+      await set_stock(products, product.id, quantity)
 
 
 @pytest.mark.parametrize(
@@ -134,7 +132,7 @@ async def test_database_constraints_reject_invalid_writes(database, statement):
   async with database.uow.begin():
     await products.create(product)
     await reservations.create(item)
-    await reservations.transition(item.id, ReservationStatus.confirmed)
+    await transition(reservations, item.id, ReservationStatus.confirmed)
     await confirmations.create(Confirmation(reservation_id=item.id))
   with pytest.raises(IntegrityError):
     async with database.uow.begin():

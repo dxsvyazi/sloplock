@@ -10,14 +10,14 @@ import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from stocklock.application.usecases.confirmations import ConfirmReservationUseCase, GetConfirmationUseCase
-from stocklock.application.usecases.products import (
+from stocklock.application.usecases.product import (
   CorrectProductStockUseCase,
   CreateProductUseCase,
   GetProductUseCase,
   ListProductsUseCase,
   UpdateProductUseCase,
 )
-from stocklock.application.usecases.reservations import (
+from stocklock.application.usecases.reservation import (
   CancelReservationUseCase,
   ExpireReservationUseCase,
   GetReservationUseCase,
@@ -178,20 +178,47 @@ async def test_domain_errors(api, error, status):
 
 
 @pytest.mark.parametrize(
-  "action,usecase,status",
+  "action,scenario,status,detail",
   [
-    ("cancel", CancelReservationUseCase, 409),
-    ("expire", ExpireReservationUseCase, 409),
-    ("confirmation", GetConfirmationUseCase, 404),
+    ("cancel", "missing", 404, "Reservation not found"),
+    ("cancel", "terminal", 409, "Reservation is no longer active"),
+    ("expire", "missing", 404, "Reservation not found"),
+    ("expire", "terminal", 409, "Reservation is not eligible for expiration"),
+    ("expire", "active", 409, "Reservation is not eligible for expiration"),
+    ("confirmation", "missing", 404, "Reservation not found"),
+    ("confirmation", "active", 404, "Confirmation not found"),
   ],
 )
-async def test_absent_transition_or_confirmation(api, action, usecase, status):
+async def test_failed_requests_use_real_workflows_and_central_error_handlers(api, action, scenario, status, detail):
+  from stocklock.application.ports.uow import IUnitOfWork
+  from stocklock.domain.ports.repositories.confirmation_repository import IConfirmationRepository
+  from stocklock.domain.ports.repositories.product_repository import IProductRepository
+  from stocklock.domain.ports.repositories.reservation_repository import IReservationRepository
+  from tests.service_doubles import Confirmations, Products, Reservations, Store
+
   app, container = api
-  with container.override({usecase: SimpleNamespace(execute=AsyncMock(return_value=None))}):
-    code, _ = await request(
+  store = Store(now=RESERVATION.created_at)
+  store.products[PRODUCT.id] = PRODUCT
+  if scenario != "missing":
+    from copy import deepcopy
+
+    item = deepcopy(RESERVATION)
+    if scenario == "terminal":
+      item.cancel(store.now)
+    store.reservations[item.id] = item
+  with container.override({
+    IUnitOfWork: store,
+    IProductRepository: Products(store),
+    IReservationRepository: Reservations(store),
+    IConfirmationRepository: Confirmations(store),
+  }):
+    code, payload = await request(
       app, "GET" if action == "confirmation" else "POST", f"/reservations/{RESERVATION.id}/{action}"
     )
   assert code == status
+  assert payload == {"detail": detail}
+  assert store.products[PRODUCT.id].stock_quantity == 5
+  assert not store.active
 
 
 async def test_container_scopes_share_graph_and_isolate_managers():

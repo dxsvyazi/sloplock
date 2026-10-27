@@ -2,14 +2,14 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from stocklock.application.ports.uow import IUnitOfWork
 from stocklock.application.usecases.confirmations import ConfirmReservationUseCase, GetConfirmationUseCase
-from stocklock.application.usecases.products import (
+from stocklock.application.usecases.product import (
   CorrectProductStockUseCase,
   CreateProductUseCase,
   GetProductUseCase,
   ListProductsUseCase,
   UpdateProductUseCase,
 )
-from stocklock.application.usecases.reservations import (
+from stocklock.application.usecases.reservation import (
   CancelReservationUseCase,
   ExpireReservationUseCase,
   GetReservationUseCase,

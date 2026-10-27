@@ -6,29 +6,13 @@ from sqlalchemy import func, select, update
 
 from stocklock.domain.entities.reservation import Reservation
 from stocklock.domain.ports.repositories.reservation_repository import IReservationRepository
-from stocklock.domain.services.reservation_service import can_transition
-from stocklock.domain.validation import validate_idempotency_key
 from stocklock.infrastructure.exceptions import ServerTimeUnavailable
 from stocklock.infrastructure.mappers.reservation import domain_to_orm, orm_to_domain
 from stocklock.infrastructure.models.reservation import ReservationORM
 from stocklock.infrastructure.repositories.base import SessionRepository, paginate
-from stocklock.shared.constraints import DEFAULT_PAGE_SIZE, MAX_STOCK_QUANTITY
+from stocklock.shared.constraints import DEFAULT_PAGE_SIZE
 from stocklock.shared.enums import ReservationStatus
-from stocklock.shared.exceptions import InvalidReservationStatus, InvalidTransitionTarget, ValidationException
 from stocklock.shared.utils.timestamps import as_utc
-
-
-def validate_reservation(reservation: Reservation) -> None:
-  if type(reservation.quantity) is not int or not 1 <= reservation.quantity <= MAX_STOCK_QUANTITY:
-    raise ValidationException("Reservation quantity must be a positive database integer")
-
-  if reservation.status is not ReservationStatus.active:
-    raise ValidationException("New reservations must be active")
-
-  validate_idempotency_key(reservation.key)
-
-  if as_utc(reservation.expires_at) <= as_utc(reservation.created_at):
-    raise ValidationException("Expiration must follow creation")
 
 
 class ReservationRepository(SessionRepository, IReservationRepository):
@@ -52,7 +36,7 @@ class ReservationRepository(SessionRepository, IReservationRepository):
     stmt = select(ReservationORM).where(ReservationORM.product_id == product_id, ReservationORM.key == key)
     row = await self.session.scalar(stmt.execution_options(populate_existing=True))
 
-    return orm_to_domain(row) if row is not None else None
+    return row and orm_to_domain(row)
 
   async def find_many(
     self,
@@ -68,9 +52,6 @@ class ReservationRepository(SessionRepository, IReservationRepository):
       stmt = stmt.where(ReservationORM.product_id == product_id)
 
     if status is not None:
-      if not isinstance(status, ReservationStatus):
-        raise InvalidReservationStatus
-
       stmt = stmt.where(ReservationORM.status == status.value)
 
     stmt = paginate(stmt, ReservationORM, start_id, limit)
@@ -90,27 +71,24 @@ class ReservationRepository(SessionRepository, IReservationRepository):
     return list(await self.session.scalars(stmt.order_by(ReservationORM.id).limit(limit)))
 
   async def create(self, reservation: Reservation) -> Reservation:
-    validate_reservation(reservation)
+    reservation.ensure_new()
 
-    row = domain_to_orm(reservation)
-
-    self.session.add(row)
+    self.session.add(domain_to_orm(reservation))
     await self.session.flush()
 
-    return orm_to_domain(row)
+    return reservation
 
-  async def transition(self, id: UUID, target: ReservationStatus) -> Reservation | None:
-    if target not in (ReservationStatus.confirmed, ReservationStatus.expired, ReservationStatus.cancelled):
-      raise InvalidTransitionTarget
+  async def save_transition(
+    self, reservation: Reservation, *, previous_status: ReservationStatus
+  ) -> Reservation | None:
+    """Caller locked before evaluating eligibility; guard the write again here."""
+    target = reservation.status
+    Reservation.validate_target(target)
 
-    # Lock first: a predicate in UPDATE alone may run before a lock wait
-    # that crosses the expiration deadline.
-    row = await self.find_by_id(id, for_update=True)
-
-    if row is None or not can_transition(row, target, await self.current_time()):
+    if previous_status is not ReservationStatus.active:
       return None
 
-    conditions = [ReservationORM.id == id, ReservationORM.status == ReservationStatus.active]
+    conditions = [ReservationORM.id == reservation.id, ReservationORM.status == ReservationStatus.active]
 
     if target is ReservationStatus.confirmed:
       conditions.append(ReservationORM.expires_at > func.clock_timestamp())
@@ -121,7 +99,7 @@ class ReservationRepository(SessionRepository, IReservationRepository):
     updated = await self.session.scalar(
       update(ReservationORM)
       .where(*conditions)
-      .values(status=target.value)
+      .values(status=reservation.status.value)
       .returning(ReservationORM)
       .execution_options(synchronize_session=False, populate_existing=True)
     )

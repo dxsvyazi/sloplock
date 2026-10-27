@@ -12,7 +12,7 @@ from stocklock.api.v1.schemas.product import (
   ProductResponse,
   UpdateProductRequest,
 )
-from stocklock.application.usecases.products import (
+from stocklock.application.usecases.product import (
   CorrectProductStockUseCase,
   CreateProductUseCase,
   GetProductUseCase,

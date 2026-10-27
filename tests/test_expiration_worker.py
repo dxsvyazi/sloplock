@@ -78,7 +78,7 @@ async def test_failed_hold_rolls_back_and_does_not_starve_later_pages(database, 
 
 
 async def test_cancellation_propagates_from_per_hold_workflow(database, monkeypatch):
-  from stocklock.application.usecases.reservations import ExpireReservationUseCase
+  from stocklock.application.usecases.reservation import TryExpireReservationUseCase
   from stocklock.infrastructure.workers.expiration import ExpirationWorker
 
   await seed(database, count=1)
@@ -86,7 +86,7 @@ async def test_cancellation_propagates_from_per_hold_workflow(database, monkeypa
   async def cancel(self, command):
     raise asyncio.CancelledError
 
-  monkeypatch.setattr(ExpireReservationUseCase, "execute", cancel)
+  monkeypatch.setattr(TryExpireReservationUseCase, "execute", cancel)
   container = create_container(session_maker=async_sessionmaker(database.engine, expire_on_commit=False))
   try:
     with pytest.raises(asyncio.CancelledError):

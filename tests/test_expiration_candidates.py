@@ -6,6 +6,7 @@ from stocklock.domain.entities.reservation import Reservation
 from stocklock.domain.services.reservation_service import ReservationService
 from stocklock.infrastructure.repositories.reservation_repository import ReservationRepository
 from stocklock.shared.enums import ReservationStatus
+from tests.entity_updates import transition
 from tests.service_doubles import Reservations, Store
 
 
@@ -58,7 +59,7 @@ async def test_postgres_due_candidates_filter_status_deadline_and_cursor(databas
         )
       )
       ids.append(item.id)
-    await reservations.transition(ids[1], ReservationStatus.cancelled)
+    await transition(reservations, ids[1], ReservationStatus.cancelled)
   flow = ListDueReservationsUseCase(database.uow, ReservationService(reservations))
   assert await flow.execute(PageCommand(limit=1)) == [ids[0]]
   assert await flow.execute(PageCommand(start_id=ids[0])) == []

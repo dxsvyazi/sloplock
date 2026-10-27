@@ -13,6 +13,7 @@ from stocklock.infrastructure.repositories.reservation_repository import Reserva
 from stocklock.shared.constraints import MAX_STOCK_QUANTITY
 from stocklock.shared.enums import ReservationStatus
 from stocklock.shared.utils import utc_now
+from tests.entity_updates import set_stock, transition
 from tests.service_doubles import Products, Store
 from tests.test_reservation_workflows import setup_repositories, wait_until_blocked
 
@@ -22,15 +23,15 @@ async def test_correction_preserves_capacity_for_active_holds(overdue):
   store = Store()
   products = ProductService(Products(store))
   async with store.begin():
-    product = await products.create(name="Widget", sku="W1", stock_quantity=5)
+    product = await products.create(Product(name="Widget", sku="W1", stock_quantity=5))
     hold = Reservation(product_id=product.id, quantity=2, key="hold", expires_at=store.now + timedelta(seconds=1))
     store.reservations[hold.id] = hold
     if overdue:
       store.now = hold.expires_at
     with pytest.raises(StockLimitExceeded):
-      await products.correct_stock(product.id, MAX_STOCK_QUANTITY - 1)
+      await set_stock(products, product.id, MAX_STOCK_QUANTITY - 1)
     assert store.products[product.id].stock_quantity == 5
-    corrected = await products.correct_stock(product.id, MAX_STOCK_QUANTITY - 2)
+    corrected = await set_stock(products, product.id, MAX_STOCK_QUANTITY - 2)
     assert corrected.stock_quantity == MAX_STOCK_QUANTITY - 2
 
 
@@ -51,10 +52,10 @@ async def test_postgresql_correction_leaves_room_for_stock_returns(database, rel
       )
   with pytest.raises(StockLimitExceeded):
     async with database.uow.begin():
-      await products.set_stock(product.id, MAX_STOCK_QUANTITY)
+      await set_stock(products, product.id, MAX_STOCK_QUANTITY)
   async with database.uow.begin():
     assert (await products.find_by_id(product.id)).stock_quantity == 3
-    await products.set_stock(product.id, MAX_STOCK_QUANTITY - 2)
+    await set_stock(products, product.id, MAX_STOCK_QUANTITY - 2)
   assert await getattr(workflows, release)(hold.id) is not None
   async with database.uow.begin():
     assert (await products.find_by_id(product.id)).stock_quantity == MAX_STOCK_QUANTITY
@@ -75,8 +76,8 @@ async def test_correction_counts_only_active_holds_for_its_product(database):
         )
       )
       if product.id == first.id:
-        await reservations.transition(hold.id, ReservationStatus.cancelled)
-    assert (await products.set_stock(first.id, MAX_STOCK_QUANTITY)).stock_quantity == MAX_STOCK_QUANTITY
+        await transition(reservations, hold.id, ReservationStatus.cancelled)
+    assert (await set_stock(products, first.id, MAX_STOCK_QUANTITY)).stock_quantity == MAX_STOCK_QUANTITY
 
 
 async def test_correction_reads_holds_committed_during_product_lock_wait(database):
@@ -90,7 +91,7 @@ async def test_correction_reads_holds_committed_during_product_lock_wait(databas
     await start.wait()
     async with database.uow.begin():
       await pid_queue.put(await database.manager.get_session().scalar(text("SELECT pg_backend_pid()")))
-      return await products.set_stock(product.id, MAX_STOCK_QUANTITY)
+      return await set_stock(products, product.id, MAX_STOCK_QUANTITY)
 
   task = asyncio.create_task(correction())
   try:
@@ -131,7 +132,7 @@ async def test_correction_racing_terminal_transition_preserves_return_capacity(d
 
   async def correct():
     async with database.uow.begin():
-      return await products.set_stock(product.id, MAX_STOCK_QUANTITY - 2)
+      return await set_stock(products, product.id, MAX_STOCK_QUANTITY - 2)
 
   results = await race(correct, lambda: getattr(workflows, terminal)(hold.id))
   assert not any(isinstance(result, Exception) for result in results)
@@ -150,7 +151,7 @@ async def test_correction_racing_reservation_cannot_remove_stock_return_capacity
 
   async def correct():
     async with database.uow.begin():
-      return await products.set_stock(product.id, MAX_STOCK_QUANTITY - 1)
+      return await set_stock(products, product.id, MAX_STOCK_QUANTITY - 1)
 
   results = await race(correct, lambda: workflows.reserve(product.id, 2, "hold"))
   assert not isinstance(results[1], Exception)

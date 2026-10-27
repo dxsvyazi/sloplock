@@ -106,14 +106,10 @@ def test_pagination_rejects_boolean_and_fractional_limits(value):
     ListProductsRequest(limit=value)
 
 
-def test_commands_validate_without_transport_models_and_are_immutable():
-  with pytest.raises(ValidationException):
-    CreateProductCommand(name="Widget", sku="W1", stock_quantity=-1)
-  with pytest.raises(ValidationException):
-    CreateReservationCommand(product_id=PRODUCT_ID, quantity=0, key="retry-1")
-
-  command = CreateProductCommand(name="Widget", sku="W1", stock_quantity=0)
-
+def test_commands_are_immutable_data_carriers():
+  command = CreateProductCommand(name="Widget", sku="W1", stock_quantity=-1)
+  assert command.stock_quantity == -1
+  assert CreateReservationCommand(product_id=PRODUCT_ID, quantity=0, key="retry-1").quantity == 0
   with pytest.raises(FrozenInstanceError):
     command.stock_quantity = 10
 
@@ -131,8 +127,6 @@ def test_commands_validate_without_transport_models_and_are_immutable():
 )
 def test_path_only_commands_keep_the_target_reservation(mapper):
   assert mapper(RESERVATION_ID).reservation_id == RESERVATION_ID
-  with pytest.raises(ValidationException):
-    mapper("not-a-uuid")
 
 
 def test_product_stock_correction_is_absolute_and_separate_from_details():

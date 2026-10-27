@@ -1,10 +1,21 @@
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
 from stocklock.domain.entities.reservation import Reservation
 from stocklock.shared.constraints import DEFAULT_PAGE_SIZE
 from stocklock.shared.enums import ReservationStatus
+
+
+@dataclass(frozen=True, slots=True)
+class ReservationSnapshot:
+  id: UUID
+  status: ReservationStatus
+
+  @classmethod
+  def capture(cls, reservation: Reservation) -> "ReservationSnapshot":
+    return cls(reservation.id, reservation.status)
 
 
 class IReservationRepository(ABC):
@@ -42,11 +53,14 @@ class IReservationRepository(ABC):
     ...
 
   @abstractmethod
-  async def transition(self, id: UUID, target: ReservationStatus) -> Reservation | None:
-    """Lock and transition an eligible active hold, or return None.
+  async def save_transition(
+    self, reservation: Reservation, *, previous_status: ReservationStatus
+  ) -> Reservation | None:
+    """Persist a terminal status on a hold locked by the caller, or return None.
 
-    Confirm requires now < expires_at; expire requires now >= expires_at.
-    Cancel accepts any stored active hold. Caller must persist a confirmation
-    or return stock in this same transaction before committing.
+    The entity is already mutated. Recheck stored active state and authoritative
+    database deadlines: confirm requires now < expires_at, expire requires
+    now >= expires_at, and cancellation accepts any stored active hold.
+    Caller must create a confirmation or return stock in this same transaction.
     """
     ...

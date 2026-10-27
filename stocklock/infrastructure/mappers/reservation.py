@@ -1,7 +1,6 @@
 from stocklock.domain.entities.reservation import Reservation
 from stocklock.infrastructure.models.reservation import ReservationORM
 from stocklock.shared.enums import ReservationStatus
-from stocklock.shared.utils.timestamps import as_utc
 
 
 def orm_to_domain(row: ReservationORM) -> Reservation:
@@ -11,8 +10,8 @@ def orm_to_domain(row: ReservationORM) -> Reservation:
     quantity=row.quantity,
     status=ReservationStatus(row.status),
     key=row.key,
-    created_at=as_utc(row.created_at),
-    expires_at=as_utc(row.expires_at),
+    created_at=row.created_at,
+    expires_at=row.expires_at,
   )
 
 
@@ -24,6 +23,6 @@ def domain_to_orm(reservation: Reservation) -> ReservationORM:
     quantity=reservation.quantity,
     status=reservation.status.value,
     key=reservation.key,
-    created_at=as_utc(reservation.created_at),
-    expires_at=as_utc(reservation.expires_at),
+    created_at=reservation.created_at,
+    expires_at=reservation.expires_at,
   )

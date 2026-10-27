@@ -28,6 +28,7 @@ class UpdateProductRequest(APISchema):
   def validate_changes(self) -> Self:
     if not self.model_fields_set or any(getattr(self, name) is None for name in self.model_fields_set):
       raise ValidationException("Supply at least one product detail; explicit null values are not allowed")
+
     return self
 
 

@@ -9,20 +9,21 @@ from stocklock.application.policies.reservation import ReservationTimePolicy
 from stocklock.application.ports.uow import IUnitOfWork
 from stocklock.application.usecases.confirmations import ConfirmReservationUseCase, GetConfirmationUseCase
 from stocklock.application.usecases.expiration import ListDueReservationsUseCase
-from stocklock.application.usecases.products import (
+from stocklock.application.usecases.product import (
   CorrectProductStockUseCase,
   CreateProductUseCase,
   GetProductUseCase,
   ListProductsUseCase,
   UpdateProductUseCase,
 )
-from stocklock.application.usecases.reservations import (
+from stocklock.application.usecases.reservation import (
   CancelReservationUseCase,
   ExpireReservationUseCase,
   GetReservationUseCase,
   ListProductReservationsUseCase,
   ListReservationsUseCase,
   ReserveProductUseCase,
+  TryExpireReservationUseCase,
 )
 from stocklock.domain.ports.repositories.confirmation_repository import IConfirmationRepository
 from stocklock.domain.ports.repositories.product_repository import IProductRepository
@@ -151,6 +152,13 @@ def expire_reservation_use_case(
 
 
 @injectable(lifetime="scoped")
+def try_expire_reservation_use_case(
+  uow: IUnitOfWork, products: ProductService, reservations: ReservationService
+) -> TryExpireReservationUseCase:
+  return TryExpireReservationUseCase(uow, products, reservations)
+
+
+@injectable(lifetime="scoped")
 def confirm_reservation_use_case(
   uow: IUnitOfWork, reservations: ReservationService, confirmations: ConfirmationService
 ) -> ConfirmReservationUseCase:
@@ -236,6 +244,7 @@ def create_container(
       list_product_reservations_use_case,
       cancel_reservation_use_case,
       expire_reservation_use_case,
+      try_expire_reservation_use_case,
       confirm_reservation_use_case,
       get_confirmation_use_case,
     ]

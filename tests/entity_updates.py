@@ -1,0 +1,50 @@
+"""Exercise snapshot saves directly inside a caller-owned test transaction."""
+
+from uuid import UUID
+
+from stocklock.domain.entities.product import Product, ProductDetailsPatch
+from stocklock.domain.entities.reservation import Reservation
+from stocklock.domain.ports.repositories.product_repository import (
+  IProductRepository,
+  ProductDetailsSnapshot,
+  ProductStockSnapshot,
+)
+from stocklock.domain.ports.repositories.reservation_repository import IReservationRepository, ReservationSnapshot
+from stocklock.domain.services.product_service import ProductService
+from stocklock.domain.services.reservation_service import ReservationService
+from stocklock.shared.enums import ReservationStatus
+
+
+async def update_details(
+  products: IProductRepository | ProductService, id: UUID, *, details: ProductDetailsPatch
+) -> Product | None:
+  service = products if isinstance(products, ProductService) else ProductService(products)
+  product = await service.products.find_by_id(id, for_update=True)
+  if product is None:
+    return None
+  original = ProductDetailsSnapshot.capture(product)
+  product.update_details(details)
+  return await service.save_details(product, original=original)
+
+
+async def set_stock(products: IProductRepository | ProductService, id: UUID, quantity: int) -> Product | None:
+  service = products if isinstance(products, ProductService) else ProductService(products)
+  product = await service.products.find_by_id(id, for_update=True)
+  if product is None:
+    return None
+  original = ProductStockSnapshot.capture(product)
+  product.correct_stock(quantity, held_quantity=await service.active_held_quantity(id))
+  return await service.save_stock(product, original=original)
+
+
+async def transition(
+  reservations: IReservationRepository | ReservationService, id: UUID, target: ReservationStatus
+) -> Reservation | None:
+  service = reservations if isinstance(reservations, ReservationService) else ReservationService(reservations)
+  reservation = await service.get(id, for_update=True)
+  if reservation is None:
+    return None
+  original = ReservationSnapshot.capture(reservation)
+  if not reservation.transition(target, await service.current_time()):
+    return None
+  return await service.save_transition(reservation, original=original)
