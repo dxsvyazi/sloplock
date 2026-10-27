@@ -48,3 +48,9 @@ def validate_idempotency_key(value: str) -> str:
 
 def validate_page(limit: int = DEFAULT_PAGE_SIZE) -> None:
   validate_quantity(limit, minimum=1, maximum=MAX_PAGE_SIZE)
+
+
+def require_type[T](value: object, expected: type[T]) -> None:
+  """Enforce typed domain boundaries without coercing primitives or other concepts."""
+  if not isinstance(value, expected):
+    raise ValidationException(f"Expected {expected.__name__}")

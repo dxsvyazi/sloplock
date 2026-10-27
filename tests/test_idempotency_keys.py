@@ -15,13 +15,14 @@ from stocklock.application.commands.reservation import CreateReservationCommand
 from stocklock.domain.entities.reservation import Reservation
 from stocklock.domain.services.reservation_service import ReservationService
 from stocklock.domain.validation import validate_idempotency_key
+from stocklock.domain.value_objects.product import SKU, StockQuantity
+from stocklock.domain.value_objects.reservation import IdempotencyKey, ReservationQuantity
 from stocklock.infrastructure.models.product import ProductORM
 from stocklock.infrastructure.models.reservation import ReservationORM
 from stocklock.shared.exceptions import ValidationException
 from stocklock.shared.utils import utc_now
 from tests.service_doubles import Reservations, Store
 from tests.test_api import request
-
 
 INVALID_KEYS = ["", " ", " key", "key ", "a\x00b", "a" * 257, "😀" * 257, "\ud800", "\udfff", None, 123]
 VALID_KEYS = ["a", "a" * 256, "😀" * 256, "é" * 256, "Key", "key", "a b"]
@@ -34,7 +35,12 @@ def test_invalid_keys_are_rejected_at_every_input_boundary(key):
   with pytest.raises(ValidationError):
     CreateReservationRequest(quantity=1, key=key)
   with pytest.raises(ValidationException):
-    Reservation(product_id=uuid4(), quantity=1, key=key, expires_at=utc_now() + timedelta(minutes=1))
+    Reservation(
+      product_id=uuid4(),
+      quantity=ReservationQuantity(1),
+      key=IdempotencyKey(key),
+      expires_at=utc_now() + timedelta(minutes=1),
+    )
 
 
 @pytest.mark.parametrize("key", VALID_KEYS)
@@ -42,19 +48,43 @@ def test_valid_keys_preserve_exact_identity(key):
   validate_idempotency_key(key)
   assert CreateReservationCommand(product_id=uuid4(), quantity=1, key=key).key == key
   assert CreateReservationRequest(quantity=1, key=key).key == key
-  reservation = Reservation(product_id=uuid4(), quantity=1, key=key, expires_at=utc_now() + timedelta(minutes=1))
-  assert reservation.key == key
+  reservation = Reservation(
+    product_id=uuid4(),
+    quantity=ReservationQuantity(1),
+    key=IdempotencyKey(key),
+    expires_at=utc_now() + timedelta(minutes=1),
+  )
+  assert reservation.key.value == key
 
 
 @pytest.mark.parametrize("key", INVALID_KEYS)
 async def test_domain_service_rejects_invalid_keys(key):
   service = ReservationService(Reservations(Store()))
   with pytest.raises(ValidationException):
-    await service.find_retry(uuid4(), key, 1)
+    await service.find_retry(uuid4(), key, ReservationQuantity(1))
   with pytest.raises(ValidationException):
     await service.create(
-      Reservation(product_id=uuid4(), quantity=1, key=key, expires_at=utc_now() + timedelta(minutes=1))
+      Reservation(
+        product_id=uuid4(),
+        quantity=ReservationQuantity(1),
+        key=IdempotencyKey(key),
+        expires_at=utc_now() + timedelta(minutes=1),
+      )
     )
+
+
+@pytest.mark.parametrize("key", ["valid-key", SKU("valid-key")])
+async def test_domain_service_rejects_untyped_and_wrong_domain_keys(key):
+  service = ReservationService(Reservations(Store()))
+  with pytest.raises(ValidationException, match="Expected IdempotencyKey"):
+    await service.find_retry(uuid4(), key, ReservationQuantity(1))
+
+
+@pytest.mark.parametrize("quantity", [1, StockQuantity(1)])
+async def test_domain_service_rejects_untyped_and_wrong_domain_quantities(quantity):
+  service = ReservationService(Reservations(Store()))
+  with pytest.raises(ValidationException, match="Expected ReservationQuantity"):
+    await service.find_retry(uuid4(), IdempotencyKey("key"), quantity)
 
 
 def test_key_limits_are_visible_in_openapi_schema():

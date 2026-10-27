@@ -13,6 +13,9 @@ from stocklock.domain.entities.reservation import Reservation
 from stocklock.domain.ports.repositories.confirmation_repository import IConfirmationRepository
 from stocklock.domain.ports.repositories.product_repository import IProductRepository, ProductDetailField
 from stocklock.domain.ports.repositories.reservation_repository import IReservationRepository
+from stocklock.domain.validation import require_type
+from stocklock.domain.value_objects.product import StockDelta
+from stocklock.domain.value_objects.reservation import IdempotencyKey
 from stocklock.shared.constraints import MAX_STOCK_QUANTITY
 from stocklock.shared.enums import ReservationStatus
 from stocklock.shared.exceptions import DynamicException
@@ -85,7 +88,7 @@ class Products(IProductRepository):
   async def active_held_quantity(self, id: UUID) -> int:
     self.store.check()
     return sum(
-      r.quantity
+      r.quantity.value
       for r in self.store.reservations.values()
       if r.product_id == id and r.status is ReservationStatus.active
     )
@@ -97,11 +100,12 @@ class Products(IProductRepository):
     object.__setattr__(current, "updated_at", product.updated_at)
     return deepcopy(current)
 
-  async def adjust_stock(self, id: UUID, delta: int) -> Product | None:
+  async def adjust_stock(self, id: UUID, delta: StockDelta) -> Product | None:
+    require_type(delta, StockDelta)
     self.store.check("adjust_stock")
     if (product := self.store.products.get(id)) is None:
       return None
-    if not 0 <= product.stock_quantity + delta <= MAX_STOCK_QUANTITY:
+    if not 0 <= product.stock_quantity.value + delta.value <= MAX_STOCK_QUANTITY:
       return None
     product.adjust_stock(delta)
     return deepcopy(product)
@@ -119,7 +123,7 @@ class Reservations(IReservationRepository):
     self.store.check()
     return deepcopy(self.store.reservations.get(id))
 
-  async def find_by_key(self, product_id: UUID, key: str) -> Reservation | None:
+  async def find_by_key(self, product_id: UUID, key: IdempotencyKey) -> Reservation | None:
     self.store.check()
     return next(
       (deepcopy(r) for r in self.store.reservations.values() if r.product_id == product_id and r.key == key),

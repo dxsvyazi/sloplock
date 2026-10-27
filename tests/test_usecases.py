@@ -25,6 +25,7 @@ from stocklock.domain.errors import IdempotencyConflict, NotFound, ReservationUn
 from stocklock.domain.services.confirmation_service import ConfirmationService
 from stocklock.domain.services.product_service import ProductService
 from stocklock.domain.services.reservation_service import ReservationService
+from stocklock.domain.value_objects.product import StockQuantity
 from stocklock.shared.enums import ReservationStatus
 from stocklock.shared.exceptions import ValidationException
 from tests.service_doubles import Confirmations, PersistenceTestFailure, Products, Reservations, Store
@@ -78,13 +79,13 @@ async def test_product_business_flows_and_read_transaction_scopes(flows):
   changed = await build("UpdateProductUseCase", "products").execute(
     UpdateProductCommand(product_id=product.id, name="Renamed")
   )
-  assert (changed.name, changed.sku, changed.stock_quantity) == ("Renamed", "W1", 5)
+  assert (changed.name.value, changed.sku.value, changed.stock_quantity.value) == ("Renamed", "W1", 5)
   corrected = await build("CorrectProductStockUseCase", "products").execute(
     CorrectProductStockCommand(product_id=product.id, stock_quantity=2)
   )
   found = await build("GetProductUseCase", "products").execute(GetProductCommand(product_id=product.id))
   assert found == corrected
-  assert found.stock_quantity == 2
+  assert found.stock_quantity.value == 2
   assert await build("ListProductsUseCase", "products").execute(ListProductsCommand()) == [found]
   assert await build("ListProductsUseCase", "products").execute(ListProductsCommand(start_id=product.id)) == []
   assert not store.active
@@ -94,7 +95,7 @@ async def test_reserve_and_confirmation_retries_preserve_identity_and_stock(flow
   store, build = flows
   product = await seed(flows)
   item = await reserve(flows, product.id)
-  assert store.products[product.id].stock_quantity == 3
+  assert store.products[product.id].stock_quantity.value == 3
   confirmation_flow = build("ConfirmReservationUseCase", "reservations", "confirmations")
   result = await confirmation_flow.execute(ConfirmReservationCommand(reservation_id=item.id))
   assert await confirmation_flow.execute(ConfirmReservationCommand(reservation_id=item.id)) == result
@@ -102,7 +103,7 @@ async def test_reserve_and_confirmation_retries_preserve_identity_and_stock(flow
   retry = await reserve(flows, product.id)
   assert retry.id == item.id
   assert retry.status is ReservationStatus.confirmed
-  assert store.products[product.id].stock_quantity == 3
+  assert store.products[product.id].stock_quantity.value == 3
   assert len(store.reservations) == len(store.confirmations) == 1
   with pytest.raises(IdempotencyConflict):
     await reserve(flows, product.id, quantity=3)
@@ -121,7 +122,7 @@ async def test_release_flow_returns_units_once(flows, name):
   assert await flow.execute(command) is not None
   with pytest.raises(ReservationUnavailable):
     await flow.execute(command)
-  assert store.products[product.id].stock_quantity == 5
+  assert store.products[product.id].stock_quantity.value == 5
   assert store.confirmations == {}
   with pytest.raises(ReservationUnavailable):
     await build("ConfirmReservationUseCase", "reservations", "confirmations").execute(
@@ -156,7 +157,7 @@ async def test_multistep_failures_roll_back_business_flow(flows, operation):
       command_type = CancelReservationCommand if operation == "cancel" else ExpireReservationCommand
       await build(name, "products", "reservations").execute(command_type(reservation_id=item.id))
   assert not store.active
-  assert store.products[product.id].stock_quantity == (5 if operation == "reserve" else 3)
+  assert store.products[product.id].stock_quantity.value == (5 if operation == "reserve" else 3)
   assert len(store.reservations) == (0 if operation == "reserve" else 1)
   assert store.confirmations == {}
   if item is not None:
@@ -173,13 +174,13 @@ async def test_expired_confirmation_and_stock_overflow_cannot_partially_transiti
       ConfirmReservationCommand(reservation_id=item.id)
     )
   # Simulate inconsistent legacy data; normal corrections now reserve return capacity.
-  store.products[product.id].correct_stock(2**31 - 1)
+  store.products[product.id].correct_stock(StockQuantity(2**31 - 1))
   with pytest.raises(StockLimitExceeded):
     await build("ExpireReservationUseCase", "products", "reservations").execute(
       ExpireReservationCommand(reservation_id=item.id)
     )
   assert store.reservations[item.id].status is ReservationStatus.active
-  assert store.products[product.id].stock_quantity == 2**31 - 1
+  assert store.products[product.id].stock_quantity.value == 2**31 - 1
 
 
 async def test_reservation_queries_filter_and_page_and_confirmation_may_be_absent(flows):
@@ -245,7 +246,7 @@ async def test_invalid_clock_timestamp_rolls_back_stock_hold(flows):
   store.now = store.now.replace(tzinfo=None)
   with pytest.raises(ValidationException):
     await reserve(flows, product.id)
-  assert store.products[product.id].stock_quantity == 5
+  assert store.products[product.id].stock_quantity.value == 5
   assert store.reservations == {}
 
 
@@ -293,7 +294,7 @@ async def test_expiration_before_deadline_raises_without_changing_inventory(flow
       ExpireReservationCommand(reservation_id=item.id)
     )
   assert store.reservations[item.id].status is ReservationStatus.active
-  assert store.products[product.id].stock_quantity == 3
+  assert store.products[product.id].stock_quantity.value == 3
   assert not store.active
 
 
@@ -305,9 +306,9 @@ async def test_cleanup_expiration_skips_missing_ineligible_and_processed_holds(f
   assert await flow.execute(ExpireReservationCommand(reservation_id=uuid4())) is None
   command = ExpireReservationCommand(reservation_id=item.id)
   assert await flow.execute(command) is None
-  assert store.products[product.id].stock_quantity == 3
+  assert store.products[product.id].stock_quantity.value == 3
   store.now = item.expires_at
   assert (await flow.execute(command)).status is ReservationStatus.expired
   assert await flow.execute(command) is None
-  assert store.products[product.id].stock_quantity == 5
+  assert store.products[product.id].stock_quantity.value == 5
   assert not store.active

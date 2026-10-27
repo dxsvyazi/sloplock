@@ -4,6 +4,7 @@ from uuid import UUID
 from stocklock.application.commands.common import PageCommand
 from stocklock.domain.entities.reservation import Reservation
 from stocklock.domain.services.reservation_service import ReservationService
+from stocklock.domain.value_objects.reservation import IdempotencyKey, ReservationQuantity
 from stocklock.infrastructure.repositories.reservation_repository import ReservationRepository
 from stocklock.shared.enums import ReservationStatus
 from tests.entity_updates import transition
@@ -23,8 +24,8 @@ async def test_due_candidates_include_exact_deadline_and_page_by_id():
     item = Reservation(
       id=UUID(int=number),
       product_id=UUID(int=10),
-      quantity=1,
-      key=str(number),
+      quantity=ReservationQuantity(1),
+      key=IdempotencyKey(str(number)),
       created_at=store.now - timedelta(minutes=1),
       expires_at=store.now + timedelta(seconds=offset),
       status=status,
@@ -44,7 +45,7 @@ async def test_postgres_due_candidates_filter_status_deadline_and_cursor(databas
   reservations = ReservationRepository(database.manager)
   products = ProductRepository(database.manager)
   async with database.uow.begin():
-    product = await products.create(Product(name="Item", sku="item", stock_quantity=0))
+    product = await products.create(Product.create(name="Item", sku="item", stock_quantity=0))
     now = await reservations.current_time()
     ids = []
     for number, offset in ((1, -1), (2, -1), (3, 3600)):
@@ -52,8 +53,8 @@ async def test_postgres_due_candidates_filter_status_deadline_and_cursor(databas
         Reservation(
           id=UUID(int=number),
           product_id=product.id,
-          quantity=1,
-          key=str(number),
+          quantity=ReservationQuantity(1),
+          key=IdempotencyKey(str(number)),
           created_at=now - timedelta(minutes=1),
           expires_at=now + timedelta(seconds=offset),
         )

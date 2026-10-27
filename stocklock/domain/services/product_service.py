@@ -9,7 +9,9 @@ from stocklock.domain.ports.repositories.product_repository import (
   ProductDetailsSnapshot,
   ProductStockSnapshot,
 )
-from stocklock.domain.validation import validate_page
+from stocklock.domain.validation import require_type, validate_page
+from stocklock.domain.value_objects.product import StockDelta
+from stocklock.domain.value_objects.reservation import ReservationQuantity
 from stocklock.shared.constraints import DEFAULT_PAGE_SIZE
 from stocklock.shared.exceptions import ValidationException
 
@@ -63,20 +65,20 @@ class ProductService:
 
     return await self.products.save_stock(product)
 
-  async def hold_stock(self, product_id: UUID, quantity: int) -> Product:
-    Product.validate_stock_operation(quantity)
+  async def hold_stock(self, product_id: UUID, quantity: ReservationQuantity) -> Product:
+    require_type(quantity, ReservationQuantity)
 
-    product = await self.products.adjust_stock(product_id, -quantity)
+    product = await self.products.adjust_stock(product_id, StockDelta(-quantity.value))
 
     if product is None:
       raise InsufficientStock
 
     return product
 
-  async def return_stock(self, product_id: UUID, quantity: int) -> Product:
-    Product.validate_stock_operation(quantity)
+  async def return_stock(self, product_id: UUID, quantity: ReservationQuantity) -> Product:
+    require_type(quantity, ReservationQuantity)
 
-    product = await self.products.adjust_stock(product_id, quantity)
+    product = await self.products.adjust_stock(product_id, StockDelta(quantity.value))
 
     if product is None:
       raise StockLimitExceeded

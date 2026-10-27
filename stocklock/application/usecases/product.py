@@ -11,6 +11,7 @@ from stocklock.application.ports.uow import IUnitOfWork
 from stocklock.domain.entities.product import Product, ProductDetailsPatch
 from stocklock.domain.ports.repositories.product_repository import ProductDetailsSnapshot, ProductStockSnapshot
 from stocklock.domain.services.product_service import ProductService
+from stocklock.domain.value_objects.product import SKU, ProductName, StockQuantity
 
 
 @dataclass(slots=True)
@@ -21,7 +22,7 @@ class CreateProductUseCase:
   async def execute(self, command: CreateProductCommand) -> Product:
     async with self.uow.begin():
       return await self.products.create(
-        Product(name=command.name, sku=command.sku, stock_quantity=command.stock_quantity)
+        Product.create(name=command.name, sku=command.sku, stock_quantity=command.stock_quantity)
       )
 
 
@@ -54,10 +55,10 @@ class UpdateProductUseCase:
     details: ProductDetailsPatch = {}
 
     if command.name is not None:
-      details["name"] = command.name
+      details["name"] = ProductName(command.name)
 
     if command.sku is not None:
-      details["sku"] = command.sku
+      details["sku"] = SKU(command.sku)
 
     async with self.uow.begin():
       product = await self.products.require(command.product_id, for_update=True)
@@ -80,6 +81,8 @@ class CorrectProductStockUseCase:
 
       original = ProductStockSnapshot.capture(product)
 
-      product.correct_stock(command.stock_quantity, held_quantity=await self.products.active_held_quantity(product.id))
+      product.correct_stock(
+        StockQuantity(command.stock_quantity), held_quantity=await self.products.active_held_quantity(product.id)
+      )
 
       return await self.products.save_stock(product, original=original)

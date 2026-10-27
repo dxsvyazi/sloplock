@@ -33,8 +33,37 @@ entity was changed and then reverted before saving.
 Public entity fields are read-only. Product and Reservation use frozen dataclass
 assignment protection, with internal writes restricted to explicit domain methods.
 They remain mutable through those methods and are deliberately unhashable.
-Confirmation is immutable. Constructors validate identities, quantities, text,
-states and timestamps without importing web or persistence frameworks.
+Confirmation is immutable. Immutable value objects validate product names, SKUs,
+stock quantities, stock deltas, reservation quantities, and idempotency keys.
+Constructors require the corresponding value-object types and validate identities,
+states, timestamp ordering, and UTC awareness without web or persistence frameworks.
+
+`Product.create(name=..., sku=..., stock_quantity=...)` accepts primitives and
+creates new identity and timestamps. `Reservation.create(product_id=...,
+quantity=..., key=..., created_at=..., expires_at=...)` accepts primitives and
+creates an active hold with a new identity. Its caller supplies the authoritative
+clock and policy-derived deadline. `Confirmation.from_reservation` remains the
+confirmation creation factory. Repositories hydrate historical entities through
+typed constructors, preserving persisted identity, status, and timestamps.
+
+```python
+from stocklock.domain.entities.product import Product
+from stocklock.domain.value_objects.product import ProductName, StockDelta, StockQuantity
+
+product = Product.create(name="Widget", sku="W1", stock_quantity=5)
+product.update_details({"name": ProductName("Renamed")})
+product.adjust_stock(StockDelta(-1))
+product.correct_stock(StockQuantity(3), held_quantity=1)
+assert product.stock_quantity.value == 3
+```
+
+Value objects compare by type and value and expose primitives through `.value`.
+StockQuantity allows zero; ReservationQuantity requires a positive integer.
+StockDelta accepts signed integer adjustments. Booleans and numeric coercion are
+rejected. Text and opaque keys are preserved exactly, including case; surrounding
+whitespace is rejected at the domain boundary. HTTP schemas retain their existing
+normalization behavior. ORM and HTTP mappers explicitly unwrap values; database
+columns and public response formats are unchanged.
 
 - `Product.update_details(details)` validates the whole patch before changing anything.
   Actual changes update `updated_at`; no-op patches preserve it.
@@ -63,15 +92,16 @@ All aware timestamps normalize to UTC; naive timestamps are rejected.
 | `ReservationService` | `get`, `require`, `list`, `list_due_ids`, `find_retry`, `current_time`, `create`, `save_transition` |
 | `ConfirmationService` | `get`, `require`, `create` |
 
-Products validate names, SKUs, and integer stock bounds. Stock correction sets an
+Product value objects validate names, SKUs, and integer stock bounds. Stock correction sets an
 absolute available quantity. Holding and returning units require a positive
 quantity and use conditional database updates, preventing lost updates and
 negative stock. Product patches accept only name and/or SKU and preserve stock.
 
-Reservations validate positive quantities, keys, and aware expiration timestamps.
+Reservation value objects validate positive quantities and keys; entities validate aware expiration timestamps.
 Application creation supplies one authoritative database instant for creation and
 expiration, and stores UTC timestamps. Direct callers construct a `Reservation`
-with explicit creation and expiration instants; the service accepts that entity.
+with typed fields and explicit creation and expiration instants, or call its
+creation factory with primitive fields; the service accepts that entity.
 The pure eligibility rule is `reservation.can_transition(target, now)`. Terminal
 use cases mutate the locked entity. The service detects a status change and the
 adapter checks time and stored state in the write predicate. Confirmation requires `now < expires_at`, expiration

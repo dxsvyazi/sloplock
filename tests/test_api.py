@@ -29,6 +29,7 @@ from stocklock.domain.entities.confirmation import Confirmation
 from stocklock.domain.entities.product import Product
 from stocklock.domain.entities.reservation import Reservation
 from stocklock.domain.errors import InsufficientStock, ProductNotFound
+from stocklock.domain.value_objects.reservation import IdempotencyKey, ReservationQuantity
 from stocklock.infrastructure.session_manager import SessionManager
 from stocklock.shared.enums import ReservationStatus
 
@@ -86,11 +87,11 @@ async def api():
     yield app, container
 
 
-PRODUCT = Product(name="Widget", sku="W1", stock_quantity=5)
+PRODUCT = Product.create(name="Widget", sku="W1", stock_quantity=5)
 RESERVATION = Reservation(
   product_id=PRODUCT.id,
-  quantity=2,
-  key="retry",
+  quantity=ReservationQuantity(2),
+  key=IdempotencyKey("retry"),
   created_at=datetime.now(timezone.utc),
   expires_at=datetime.now(timezone.utc) + timedelta(minutes=15),
 )
@@ -206,18 +207,20 @@ async def test_failed_requests_use_real_workflows_and_central_error_handlers(api
     if scenario == "terminal":
       item.cancel(store.now)
     store.reservations[item.id] = item
-  with container.override({
-    IUnitOfWork: store,
-    IProductRepository: Products(store),
-    IReservationRepository: Reservations(store),
-    IConfirmationRepository: Confirmations(store),
-  }):
+  with container.override(
+    {
+      IUnitOfWork: store,
+      IProductRepository: Products(store),
+      IReservationRepository: Reservations(store),
+      IConfirmationRepository: Confirmations(store),
+    }
+  ):
     code, payload = await request(
       app, "GET" if action == "confirmation" else "POST", f"/reservations/{RESERVATION.id}/{action}"
     )
   assert code == status
   assert payload == {"detail": detail}
-  assert store.products[PRODUCT.id].stock_quantity == 5
+  assert store.products[PRODUCT.id].stock_quantity.value == 5
   assert not store.active
 
 

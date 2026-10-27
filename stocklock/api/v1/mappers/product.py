@@ -40,9 +40,9 @@ def list_request_to_command(request: ListProductsRequest) -> ListProductsCommand
 def domain_to_response(product: Product) -> ProductResponse:
   return ProductResponse(
     id=product.id,
-    name=product.name,
-    sku=product.sku,
-    stock_quantity=product.stock_quantity,
+    name=product.name.value,
+    sku=product.sku.value,
+    stock_quantity=product.stock_quantity.value,
     created_at=product.created_at,
     updated_at=product.updated_at,
   )

@@ -4,6 +4,7 @@ from datetime import datetime
 from uuid import UUID
 
 from stocklock.domain.entities.reservation import Reservation
+from stocklock.domain.value_objects.reservation import IdempotencyKey
 from stocklock.shared.constraints import DEFAULT_PAGE_SIZE
 from stocklock.shared.enums import ReservationStatus
 
@@ -30,7 +31,7 @@ class IReservationRepository(ABC):
   async def find_by_id(self, id: UUID, *, for_update: bool = False) -> Reservation | None: ...
 
   @abstractmethod
-  async def find_by_key(self, product_id: UUID, key: str) -> Reservation | None: ...
+  async def find_by_key(self, product_id: UUID, key: IdempotencyKey) -> Reservation | None: ...
 
   @abstractmethod
   async def find_many(

@@ -8,6 +8,8 @@ from stocklock.domain.entities.confirmation import Confirmation
 from stocklock.domain.entities.product import Product
 from stocklock.domain.entities.reservation import Reservation
 from stocklock.domain.errors import IdempotencyConflict, InsufficientStock, ReservationUnavailable, StockLimitExceeded
+from stocklock.domain.value_objects.product import SKU, ProductName, StockDelta, StockQuantity
+from stocklock.domain.value_objects.reservation import IdempotencyKey, ReservationQuantity
 from stocklock.shared.constraints import MAX_STOCK_QUANTITY
 from stocklock.shared.enums import ReservationStatus
 from stocklock.shared.exceptions import ValidationException
@@ -16,9 +18,12 @@ NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 
 def hold(**changes):
-  return Reservation(
-    **(dict(product_id=uuid4(), quantity=2, key="key", created_at=NOW, expires_at=NOW + timedelta(minutes=1)) | changes)
+  values = (
+    dict(product_id=uuid4(), quantity=2, key="key", created_at=NOW, expires_at=NOW + timedelta(minutes=1)) | changes
   )
+  values["quantity"] = ReservationQuantity(values["quantity"])
+  values["key"] = IdempotencyKey(values["key"])
+  return Reservation(**values)
 
 
 @pytest.mark.parametrize(
@@ -34,42 +39,42 @@ def hold(**changes):
 )
 def test_product_rejects_invalid_construction(changes):
   with pytest.raises(ValidationException):
-    Product(**(dict(name="Widget", sku="W1", stock_quantity=3) | changes))
+    Product(**(dict(name=ProductName("Widget"), sku=SKU("W1"), stock_quantity=StockQuantity(3)) | changes))
 
 
 @pytest.mark.parametrize("field,value", [("stock_quantity", -1), ("name", "bad"), ("id", uuid4())])
 def test_product_fields_are_read_only(field, value):
-  product = Product(name="Widget", sku="W1", stock_quantity=3)
+  product = Product.create(name="Widget", sku="W1", stock_quantity=3)
   with pytest.raises(FrozenInstanceError):
     setattr(product, field, value)
 
 
 def test_detail_changes_validate_all_fields_before_mutating():
-  product = Product(name="Widget", sku="W1", stock_quantity=3)
+  product = Product.create(name="Widget", sku="W1", stock_quantity=3)
   with pytest.raises(ValidationException):
-    product.update_details({"name": "Renamed", "sku": " "})
-  assert (product.name, product.sku, product.updated_at) == ("Widget", "W1", None)
-  product.update_details({"name": "Renamed"})
-  assert (product.name, product.sku, product.stock_quantity) == ("Renamed", "W1", 3)
+    product.update_details({"name": ProductName("Renamed"), "sku": " "})
+  assert (product.name.value, product.sku.value, product.updated_at) == ("Widget", "W1", None)
+  product.update_details({"name": ProductName("Renamed")})
+  assert (product.name.value, product.sku.value, product.stock_quantity.value) == ("Renamed", "W1", 3)
   assert product.updated_at is not None
   timestamp = product.updated_at
-  product.update_details({"name": "Renamed"})
+  product.update_details({"name": ProductName("Renamed")})
   assert product.updated_at == timestamp
 
 
 def test_stock_methods_preserve_bounds_and_failed_mutations():
-  product = Product(name="Widget", sku="W1", stock_quantity=3)
+  product = Product.create(name="Widget", sku="W1", stock_quantity=3)
   with pytest.raises(InsufficientStock):
-    product.adjust_stock(-4)
-  assert (product.stock_quantity, product.updated_at) == (3, None)
-  product.adjust_stock(-2)
-  assert product.stock_quantity == 1
+    product.adjust_stock(StockDelta(-4))
+  assert (product.stock_quantity.value, product.updated_at) == (3, None)
+  product.adjust_stock(StockDelta(-2))
+  assert product.stock_quantity.value == 1
   with pytest.raises(StockLimitExceeded):
-    product.correct_stock(MAX_STOCK_QUANTITY, held_quantity=1)
-  assert product.stock_quantity == 1
-  product.correct_stock(MAX_STOCK_QUANTITY - 1, held_quantity=1)
+    product.correct_stock(StockQuantity(MAX_STOCK_QUANTITY), held_quantity=1)
+  assert product.stock_quantity.value == 1
+  product.correct_stock(StockQuantity(MAX_STOCK_QUANTITY - 1), held_quantity=1)
   with pytest.raises(StockLimitExceeded):
-    product.adjust_stock(2)
+    product.adjust_stock(StockDelta(2))
 
 
 @pytest.mark.parametrize(
@@ -130,9 +135,9 @@ def test_expiration_boundary_and_confirmation_factory():
 
 def test_retry_compatibility_belongs_to_reservation():
   item = hold()
-  item.ensure_retry(2)
+  item.ensure_retry(ReservationQuantity(2))
   with pytest.raises(IdempotencyConflict):
-    item.ensure_retry(1)
+    item.ensure_retry(ReservationQuantity(1))
 
 
 @pytest.mark.parametrize("value", [None, "2026-01-01", 123])
@@ -140,7 +145,7 @@ def test_retry_compatibility_belongs_to_reservation():
 def test_entities_reject_non_datetime_timestamps(entity, value):
   with pytest.raises(ValidationException):
     if entity == "product":
-      Product(name="Widget", sku="W1", stock_quantity=0, created_at=value)
+      Product(name=ProductName("Widget"), sku=SKU("W1"), stock_quantity=StockQuantity(0), created_at=value)
     elif entity == "reservation":
       hold(created_at=value)
     else:

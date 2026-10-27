@@ -9,6 +9,8 @@ from sqlalchemy.exc import IntegrityError
 from stocklock.domain.entities.confirmation import Confirmation
 from stocklock.domain.entities.product import Product
 from stocklock.domain.entities.reservation import Reservation
+from stocklock.domain.value_objects.product import StockDelta
+from stocklock.domain.value_objects.reservation import IdempotencyKey, ReservationQuantity
 from stocklock.infrastructure.exceptions import NoActiveSession
 from stocklock.infrastructure.repositories.product_repository import ProductRepository
 from stocklock.shared.enums import ReservationStatus
@@ -24,29 +26,32 @@ def repositories(database):
 
 
 def reservation(product, **changes):
-  return Reservation(
-    **(dict(product_id=product.id, quantity=2, key=str(uuid4()), expires_at=utc_now() + timedelta(minutes=5)) | changes)
+  values = (
+    dict(product_id=product.id, quantity=2, key=str(uuid4()), expires_at=utc_now() + timedelta(minutes=5)) | changes
   )
+  values["quantity"] = ReservationQuantity(values["quantity"])
+  values["key"] = IdempotencyKey(values["key"])
+  return Reservation(**values)
 
 
 async def test_product_crud_uses_partial_details_and_explicit_stock_operations(database):
   products = ProductRepository(database.manager)
-  product = Product(name="Widget", sku="W1", stock_quantity=5)
+  product = Product.create(name="Widget", sku="W1", stock_quantity=5)
   async with database.uow.begin():
     assert await products.create(product) == product
     assert await products.find_by_id(uuid4()) is None
-    assert await products.adjust_stock(product.id, -3) is not None
-    assert await products.adjust_stock(product.id, -3) is None
+    assert await products.adjust_stock(product.id, StockDelta(-3)) is not None
+    assert await products.adjust_stock(product.id, StockDelta(-3)) is None
     changed = await update_details(products, product.id, details={"name": "Renamed"})
-    assert (changed.name, changed.sku, changed.stock_quantity) == ("Renamed", "W1", 2)
-    assert (await set_stock(products, product.id, 0)).stock_quantity == 0
-    assert (await products.adjust_stock(product.id, 2**31 - 1)).stock_quantity == 2**31 - 1
-    assert await products.adjust_stock(product.id, 1) is None
-    assert (await products.adjust_stock(product.id, -(2**31 - 1))).stock_quantity == 0
+    assert (changed.name.value, changed.sku.value, changed.stock_quantity.value) == ("Renamed", "W1", 2)
+    assert (await set_stock(products, product.id, 0)).stock_quantity.value == 0
+    assert (await products.adjust_stock(product.id, StockDelta(2**31 - 1))).stock_quantity.value == 2**31 - 1
+    assert await products.adjust_stock(product.id, StockDelta(1)) is None
+    assert (await products.adjust_stock(product.id, StockDelta(-(2**31 - 1)))).stock_quantity.value == 0
     assert await set_stock(products, uuid4(), 1) is None
     assert await update_details(products, uuid4(), details={"sku": "missing"}) is None
   async with database.uow.begin():
-    assert (await products.find_by_id(product.id)).stock_quantity == 0
+    assert (await products.find_by_id(product.id)).stock_quantity.value == 0
     assert len(await products.find_many(limit=1)) == 1
     assert await products.find_many(start_id=product.id) == []
 
@@ -64,8 +69,8 @@ async def test_repository_access_requires_explicit_transaction(database):
 
 async def test_reservation_filters_and_irreversible_transitions(database):
   products, reservations, confirmations = repositories(database)
-  first = Product(name="Widget", sku="W1", stock_quantity=8)
-  second = Product(name="Other", sku="W2", stock_quantity=8)
+  first = Product.create(name="Widget", sku="W1", stock_quantity=8)
+  second = Product.create(name="Other", sku="W2", stock_quantity=8)
   active = reservation(first)
   expired = reservation(first, created_at=utc_now() - timedelta(minutes=2), expires_at=utc_now() - timedelta(minutes=1))
   other = reservation(second)
@@ -104,9 +109,9 @@ async def test_reservation_filters_and_irreversible_transitions(database):
 async def test_product_repository_rejects_invalid_stock(database, quantity):
   products = ProductRepository(database.manager)
   async with database.uow.begin():
-    product = await products.create(Product(name="Widget", sku="W1", stock_quantity=0))
+    product = await products.create(Product.create(name="Widget", sku="W1", stock_quantity=0))
     with pytest.raises(ValidationException):
-      await products.create(Product(name="Widget", sku="W1", stock_quantity=quantity))
+      await products.create(Product.create(name="Widget", sku="W1", stock_quantity=quantity))
     with pytest.raises(ValidationException):
       await set_stock(products, product.id, quantity)
 
@@ -127,7 +132,7 @@ async def test_product_repository_rejects_invalid_stock(database, quantity):
 )
 async def test_database_constraints_reject_invalid_writes(database, statement):
   products, reservations, confirmations = repositories(database)
-  product = Product(name="Widget", sku="W1", stock_quantity=8)
+  product = Product.create(name="Widget", sku="W1", stock_quantity=8)
   item = reservation(product)
   async with database.uow.begin():
     await products.create(product)
@@ -137,3 +142,13 @@ async def test_database_constraints_reject_invalid_writes(database, statement):
   with pytest.raises(IntegrityError):
     async with database.uow.begin():
       await database.manager.get_session(raises=True).execute(text(statement))
+
+
+@pytest.mark.parametrize("delta", [-1, -(2**31 - 1), 1, 2**31 - 1])
+async def test_atomic_stock_delta_guards_fit_postgresql_integer_range(database, delta):
+  repository = ProductRepository(database.manager)
+  initial = 2**31 - 1 if delta < 0 else 0
+  async with database.uow.begin():
+    product = await repository.create(Product.create(name="Widget", sku="W1", stock_quantity=initial))
+    changed = await repository.adjust_stock(product.id, StockDelta(delta))
+    assert changed.stock_quantity.value == initial + delta

@@ -11,6 +11,8 @@ from stocklock.domain.ports.repositories.product_repository import ProductDetail
 from stocklock.domain.ports.repositories.reservation_repository import ReservationSnapshot
 from stocklock.domain.services.product_service import ProductService
 from stocklock.domain.services.reservation_service import ReservationService
+from stocklock.domain.value_objects.product import ProductName, StockDelta, StockQuantity
+from stocklock.domain.value_objects.reservation import IdempotencyKey, ReservationQuantity
 from stocklock.infrastructure.repositories.product_repository import ProductRepository
 from stocklock.infrastructure.repositories.reservation_repository import ReservationRepository
 from stocklock.shared.enums import ReservationStatus
@@ -34,14 +36,14 @@ async def test_reverted_changes_preserve_persisted_timestamp(kind, method):
   store = Store()
   service = ProductService(Products(store))
   async with store.begin():
-    product = await service.create(Product(name="Widget", sku="W1", stock_quantity=5))
+    product = await service.create(Product.create(name="Widget", sku="W1", stock_quantity=5))
     original = product_snapshot(product, kind)
     if kind == "ProductDetailsSnapshot":
-      product.update_details({"name": "Renamed"})
-      product.update_details({"name": "Widget"})
+      product.update_details({"name": ProductName("Renamed")})
+      product.update_details({"name": ProductName("Widget")})
     else:
-      product.correct_stock(2)
-      product.correct_stock(5)
+      product.correct_stock(StockQuantity(2))
+      product.correct_stock(StockQuantity(5))
     store.fail = method
     result = await getattr(service, method)(product, original=original)
     assert result.updated_at is None
@@ -52,16 +54,16 @@ async def test_snapshot_stays_unchanged_and_detail_save_preserves_stock():
   store = Store()
   service = ProductService(Products(store))
   async with store.begin():
-    product = await service.create(Product(name="Widget", sku="W1", stock_quantity=5))
+    product = await service.create(Product.create(name="Widget", sku="W1", stock_quantity=5))
     original = product_snapshot(product)
-    product.update_details({"name": "Renamed"})
-    assert original.name == "Widget"
+    product.update_details({"name": ProductName("Renamed")})
+    assert original.name.value == "Widget"
     with pytest.raises(FrozenInstanceError):
       original.name = "Changed"
     # Even an unrelated mutation must not be included in a detail save.
-    product.adjust_stock(-1)
+    product.adjust_stock(StockDelta(-1))
     result = await service.save_details(product, original=original)
-    assert (result.name, result.sku, result.stock_quantity) == ("Renamed", "W1", 5)
+    assert (result.name.value, result.sku.value, result.stock_quantity.value) == ("Renamed", "W1", 5)
     assert result.updated_at == product.updated_at
 
 
@@ -72,7 +74,7 @@ async def test_unchanged_product_does_not_attempt_persistence(kind, method):
   store = Store()
   service = ProductService(Products(store))
   async with store.begin():
-    product = await service.create(Product(name="Widget", sku="W1", stock_quantity=5))
+    product = await service.create(Product.create(name="Widget", sku="W1", stock_quantity=5))
     original = product_snapshot(product, kind)
     store.fail = method
     assert await getattr(service, method)(product, original=original) == product
@@ -86,8 +88,8 @@ async def test_product_save_rejects_snapshot_from_another_entity(kind, method):
   store = Store()
   service = ProductService(Products(store))
   async with store.begin():
-    product = await service.create(Product(name="Widget", sku="W1", stock_quantity=5))
-    other = Product(name="Other", sku="W2", stock_quantity=2)
+    product = await service.create(Product.create(name="Widget", sku="W1", stock_quantity=5))
+    other = Product.create(name="Other", sku="W2", stock_quantity=2)
     with pytest.raises(ValidationException):
       await getattr(service, method)(product, original=product_snapshot(other, kind))
     assert store.products[product.id] == product
@@ -97,12 +99,12 @@ async def test_stock_save_uses_entity_timestamp_and_preserves_details():
   store = Store()
   service = ProductService(Products(store))
   async with store.begin():
-    product = await service.create(Product(name="Widget", sku="W1", stock_quantity=5))
+    product = await service.create(Product.create(name="Widget", sku="W1", stock_quantity=5))
     original = product_snapshot(product, "ProductStockSnapshot")
-    product.correct_stock(2)
-    product.update_details({"name": "Unrelated"})
+    product.correct_stock(StockQuantity(2))
+    product.update_details({"name": ProductName("Unrelated")})
     result = await service.save_stock(product, original=original)
-    assert (result.name, result.stock_quantity, result.updated_at) == ("Widget", 2, product.updated_at)
+    assert (result.name.value, result.stock_quantity.value, result.updated_at) == ("Widget", 2, product.updated_at)
 
 
 @pytest.mark.parametrize("status", list(ReservationStatus))
@@ -111,8 +113,8 @@ async def test_unchanged_reservation_does_not_attempt_a_terminal_write(status):
   service = ReservationService(Reservations(store))
   item = Reservation(
     product_id=uuid4(),
-    quantity=1,
-    key="hold",
+    quantity=ReservationQuantity(1),
+    key=IdempotencyKey("hold"),
     status=status,
     created_at=store.now,
     expires_at=store.now + timedelta(minutes=1),
@@ -128,7 +130,12 @@ async def test_unchanged_reservation_does_not_attempt_a_terminal_write(status):
 async def test_reservation_save_rejects_snapshot_from_another_entity():
   store = Store()
   service = ReservationService(Reservations(store))
-  values = dict(product_id=uuid4(), quantity=1, key="hold", expires_at=store.now + timedelta(minutes=1))
+  values = dict(
+    product_id=uuid4(),
+    quantity=ReservationQuantity(1),
+    key=IdempotencyKey("hold"),
+    expires_at=store.now + timedelta(minutes=1),
+  )
   item, other = Reservation(**values), Reservation(**values)
   async with store.begin():
     original = reservation_snapshot(other)
@@ -145,7 +152,7 @@ async def test_postgresql_noop_updates_preserve_row_version(database):
   repository = ProductRepository(database.manager)
   service = ProductService(repository)
   async with database.uow.begin():
-    product = await repository.create(Product(name="Widget", sku="W1", stock_quantity=5))
+    product = await repository.create(Product.create(name="Widget", sku="W1", stock_quantity=5))
     version = await database.manager.get_session().scalar(
       text("SELECT xmin::text FROM products WHERE id=:id"), {"id": product.id}
     )
@@ -170,20 +177,20 @@ async def test_postgresql_save_persists_exact_entity_timestamp_and_selected_fiel
   timestamp = datetime(2026, 10, 27, 12, tzinfo=timezone.utc)
   monkeypatch.setattr("stocklock.domain.entities.product.utc_now", lambda: timestamp)
   async with database.uow.begin():
-    product = await repository.create(Product(name="Widget", sku="W1", stock_quantity=5))
+    product = await repository.create(Product.create(name="Widget", sku="W1", stock_quantity=5))
     product = await service.require(product.id, for_update=True)
     if operation == "details":
       original = ProductDetailsSnapshot.capture(product)
-      product.update_details({"name": "Renamed"})
-      product.adjust_stock(-1)
+      product.update_details({"name": ProductName("Renamed")})
+      product.adjust_stock(StockDelta(-1))
       saved = await service.save_details(product, original=original)
-      assert (saved.name, saved.sku, saved.stock_quantity) == ("Renamed", "W1", 5)
+      assert (saved.name.value, saved.sku.value, saved.stock_quantity.value) == ("Renamed", "W1", 5)
     else:
       original = ProductStockSnapshot.capture(product)
-      product.correct_stock(2, held_quantity=await service.active_held_quantity(product.id))
-      product.update_details({"name": "Unrelated"})
+      product.correct_stock(StockQuantity(2), held_quantity=await service.active_held_quantity(product.id))
+      product.update_details({"name": ProductName("Unrelated")})
       saved = await service.save_stock(product, original=original)
-      assert (saved.name, saved.sku, saved.stock_quantity) == ("Widget", "W1", 2)
+      assert (saved.name.value, saved.sku.value, saved.stock_quantity.value) == ("Widget", "W1", 2)
     assert saved.updated_at == timestamp
     assert saved.created_at == product.created_at
   async with database.uow.begin():
@@ -195,13 +202,13 @@ async def test_postgresql_terminal_save_rechecks_deadline_after_domain_mutation(
   repository = ReservationRepository(database.manager)
   service = ReservationService(repository)
   async with database.uow.begin():
-    product = await products.create(Product(name="Widget", sku="W1", stock_quantity=5))
+    product = await products.create(Product.create(name="Widget", sku="W1", stock_quantity=5))
     now = await service.current_time()
     item = await repository.create(
       Reservation(
         product_id=product.id,
-        quantity=1,
-        key="hold",
+        quantity=ReservationQuantity(1),
+        key=IdempotencyKey("hold"),
         created_at=now - timedelta(minutes=2),
         expires_at=now + timedelta(minutes=1),
       )

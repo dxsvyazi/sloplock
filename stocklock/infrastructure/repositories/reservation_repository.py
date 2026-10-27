@@ -6,6 +6,8 @@ from sqlalchemy import func, select, update
 
 from stocklock.domain.entities.reservation import Reservation
 from stocklock.domain.ports.repositories.reservation_repository import IReservationRepository
+from stocklock.domain.validation import require_type
+from stocklock.domain.value_objects.reservation import IdempotencyKey
 from stocklock.infrastructure.exceptions import ServerTimeUnavailable
 from stocklock.infrastructure.mappers.reservation import domain_to_orm, orm_to_domain
 from stocklock.infrastructure.models.reservation import ReservationORM
@@ -32,8 +34,9 @@ class ReservationRepository(SessionRepository, IReservationRepository):
 
     return row and orm_to_domain(row)
 
-  async def find_by_key(self, product_id: UUID, key: str) -> Reservation | None:
-    stmt = select(ReservationORM).where(ReservationORM.product_id == product_id, ReservationORM.key == key)
+  async def find_by_key(self, product_id: UUID, key: IdempotencyKey) -> Reservation | None:
+    require_type(key, IdempotencyKey)
+    stmt = select(ReservationORM).where(ReservationORM.product_id == product_id, ReservationORM.key == key.value)
     row = await self.session.scalar(stmt.execution_options(populate_existing=True))
 
     return row and orm_to_domain(row)

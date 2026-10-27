@@ -1,4 +1,5 @@
 from stocklock.domain.entities.reservation import Reservation
+from stocklock.domain.value_objects.reservation import IdempotencyKey, ReservationQuantity
 from stocklock.infrastructure.models.reservation import ReservationORM
 from stocklock.shared.enums import ReservationStatus
 
@@ -7,9 +8,9 @@ def orm_to_domain(row: ReservationORM) -> Reservation:
   return Reservation(
     id=row.id,
     product_id=row.product_id,
-    quantity=row.quantity,
+    quantity=ReservationQuantity(row.quantity),
     status=ReservationStatus(row.status),
-    key=row.key,
+    key=IdempotencyKey(row.key),
     created_at=row.created_at,
     expires_at=row.expires_at,
   )
@@ -20,9 +21,9 @@ def domain_to_orm(reservation: Reservation) -> ReservationORM:
   return ReservationORM(
     id=reservation.id,
     product_id=reservation.product_id,
-    quantity=reservation.quantity,
+    quantity=reservation.quantity.value,
     status=reservation.status.value,
-    key=reservation.key,
+    key=reservation.key.value,
     created_at=reservation.created_at,
     expires_at=reservation.expires_at,
   )

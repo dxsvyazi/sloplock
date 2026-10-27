@@ -62,7 +62,7 @@ def domain_to_response(reservation: Reservation) -> ReservationResponse:
   return ReservationResponse(
     id=reservation.id,
     product_id=reservation.product_id,
-    quantity=reservation.quantity,
+    quantity=reservation.quantity.value,
     status=reservation.status.name,
     created_at=reservation.created_at,
     expires_at=reservation.expires_at,

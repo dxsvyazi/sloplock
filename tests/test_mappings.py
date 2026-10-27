@@ -25,6 +25,8 @@ from stocklock.application.commands.reservation import CreateReservationCommand
 from stocklock.domain.entities.confirmation import Confirmation
 from stocklock.domain.entities.product import Product
 from stocklock.domain.entities.reservation import Reservation
+from stocklock.domain.value_objects.product import SKU, ProductName, StockQuantity
+from stocklock.domain.value_objects.reservation import IdempotencyKey, ReservationQuantity
 from stocklock.infrastructure.mappers import confirmation as confirmation_db
 from stocklock.infrastructure.mappers import product as product_db
 from stocklock.infrastructure.mappers import reservation as reservation_db
@@ -161,9 +163,9 @@ def test_response_requires_aware_timestamps():
 def test_product_mapping_preserves_identity_and_history():
   product = Product(
     id=PRODUCT_ID,
-    name="Widget",
-    sku="W1",
-    stock_quantity=7,
+    name=ProductName("Widget"),
+    sku=SKU("W1"),
+    stock_quantity=StockQuantity(7),
     created_at=CREATED,
     updated_at=CREATED + timedelta(hours=1),
   )
@@ -180,9 +182,9 @@ def test_reservation_maps_integer_storage_status_to_public_name(status):
   reservation = Reservation(
     id=RESERVATION_ID,
     product_id=PRODUCT_ID,
-    quantity=3,
+    quantity=ReservationQuantity(3),
     status=status,
-    key="retry-1",
+    key=IdempotencyKey("retry-1"),
     created_at=CREATED,
     expires_at=CREATED + timedelta(minutes=10),
   )
@@ -205,9 +207,9 @@ def test_confirmation_mapping_preserves_existing_result():
 def test_persistence_rejects_naive_times_and_normalizes_aware_times():
   product = Product(
     id=PRODUCT_ID,
-    name="Widget",
-    sku="W1",
-    stock_quantity=0,
+    name=ProductName("Widget"),
+    sku=SKU("W1"),
+    stock_quantity=StockQuantity(0),
     created_at=CREATED.replace(tzinfo=timezone(timedelta(hours=7))),
   )
   row = product_db.domain_to_orm(product)

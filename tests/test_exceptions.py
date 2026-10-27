@@ -52,6 +52,6 @@ def test_empty_product_patch_raises_static_validation_exception():
   from stocklock.shared.exceptions import MissingProductDetails
 
   with pytest.raises(MissingProductDetails) as caught:
-    Product.validate_details({})
+    Product.create(name="Widget", sku="W1", stock_quantity=0).update_details({})
   assert isinstance(caught.value, StaticException)
   assert isinstance(caught.value, ValidationException)

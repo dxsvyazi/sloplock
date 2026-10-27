@@ -5,6 +5,8 @@ from sqlalchemy import func, select, update
 
 from stocklock.domain.entities.product import Product
 from stocklock.domain.ports.repositories.product_repository import IProductRepository, ProductDetailField
+from stocklock.domain.validation import require_type
+from stocklock.domain.value_objects.product import StockDelta
 from stocklock.infrastructure.exceptions import EntityUpdateConflict
 from stocklock.infrastructure.mappers.product import details_to_values, domain_to_orm, orm_to_domain
 from stocklock.infrastructure.models.product import ProductORM
@@ -73,7 +75,7 @@ class ProductRepository(SessionRepository, IProductRepository):
 
   async def save_stock(self, product: Product) -> Product:
     result = await self._update(
-      product.id, {"stock_quantity": product.stock_quantity, "updated_at": product.updated_at}
+      product.id, {"stock_quantity": product.stock_quantity.value, "updated_at": product.updated_at}
     )
 
     if result is None:
@@ -81,12 +83,15 @@ class ProductRepository(SessionRepository, IProductRepository):
 
     return result
 
-  async def adjust_stock(self, id: UUID, delta: int) -> Product | None:
-    Product.validate_stock_delta(delta)
+  async def adjust_stock(self, id: UUID, delta: StockDelta) -> Product | None:
+    require_type(delta, StockDelta)
+    change = delta.value
 
     return await self._update(
       id,
-      {"stock_quantity": ProductORM.stock_quantity + delta, "updated_at": func.clock_timestamp()},
-      ProductORM.stock_quantity >= -delta,
-      ProductORM.stock_quantity <= MAX_STOCK_QUANTITY - delta,
+      {"stock_quantity": ProductORM.stock_quantity + change, "updated_at": func.clock_timestamp()},
+      ProductORM.stock_quantity >= -change,
+      # A decrement's mathematical upper bound exceeds int32; valid stock is
+      # already bounded by the schema, and asyncpg must receive an int32 value.
+      ProductORM.stock_quantity <= min(MAX_STOCK_QUANTITY, MAX_STOCK_QUANTITY - change),
     )

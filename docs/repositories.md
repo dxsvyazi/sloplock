@@ -153,3 +153,13 @@ Raw SQL and incomplete repository-only workflows remain outside this guarantee.
 time, ordered by UUID with an exclusive cursor. It takes no row locks; expiry
 rechecks eligibility in the existing per-reservation transaction. Multiple
 workers may select the same IDs safely.
+
+
+## Domain value boundaries
+
+Product detail and stock snapshots hold immutable value objects. The product
+repository's `adjust_stock` accepts `StockDelta`, and reservation key lookup
+accepts `IdempotencyKey`. ORM mappers construct typed domain fields on hydration
+and unwrap `.value` for inserts and updates. Stock-delta arithmetic stays in one
+conditional SQL update; its bound parameters fit PostgreSQL's integer range for
+both positive and negative adjustments.

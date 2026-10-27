@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from stocklock.domain.entities.product import Product
 from stocklock.domain.entities.reservation import Reservation
+from stocklock.domain.value_objects.reservation import IdempotencyKey, ReservationQuantity
 from stocklock.infrastructure.repositories.product_repository import ProductRepository
 from stocklock.infrastructure.repositories.reservation_repository import ReservationRepository
 from stocklock.project.container import create_container
@@ -20,13 +21,13 @@ async def seed(database, count=3):
     now = await reservations.current_time()
     pairs = []
     for number in range(1, count + 1):
-      product = await products.create(Product(name="Item", sku=str(number), stock_quantity=0))
+      product = await products.create(Product.create(name="Item", sku=str(number), stock_quantity=0))
       item = await reservations.create(
         Reservation(
           id=UUID(int=number),
           product_id=product.id,
-          quantity=1,
-          key=str(number),
+          quantity=ReservationQuantity(1),
+          key=IdempotencyKey(str(number)),
           created_at=now - timedelta(minutes=2),
           expires_at=now - timedelta(minutes=1),
         )
@@ -45,7 +46,7 @@ async def test_overlapping_sweeps_return_stock_once(database):
     await asyncio.gather(*(worker.run_once() for worker in workers))
     async with database.uow.begin():
       for product, item in pairs:
-        assert (await ProductRepository(database.manager).find_by_id(product.id)).stock_quantity == 1
+        assert (await ProductRepository(database.manager).find_by_id(product.id)).stock_quantity.value == 1
         assert (await ReservationRepository(database.manager).find_by_id(item.id)).status is ReservationStatus.expired
   finally:
     await container.close()
@@ -68,7 +69,7 @@ async def test_failed_hold_rolls_back_and_does_not_starve_later_pages(database, 
     await ExpirationWorker(container, timedelta(seconds=1), batch_size=1).run_once()
     async with database.uow.begin():
       for index, (product, item) in enumerate(pairs):
-        assert (await ProductRepository(database.manager).find_by_id(product.id)).stock_quantity == (
+        assert (await ProductRepository(database.manager).find_by_id(product.id)).stock_quantity.value == (
           0 if index == 0 else 1
         )
         expected = ReservationStatus.active if index == 0 else ReservationStatus.expired
@@ -167,6 +168,6 @@ async def test_locked_hold_times_out_and_later_candidates_still_expire(database)
       assert (
         await ReservationRepository(database.manager).find_by_id(pairs[0][1].id)
       ).status is ReservationStatus.expired
-      assert (await ProductRepository(database.manager).find_by_id(pairs[0][0].id)).stock_quantity == 1
+      assert (await ProductRepository(database.manager).find_by_id(pairs[0][0].id)).stock_quantity.value == 1
   finally:
     await container.close()

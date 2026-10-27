@@ -4,6 +4,7 @@ from uuid import uuid4
 import pytest
 
 from stocklock.domain.entities.reservation import Reservation
+from stocklock.domain.value_objects.reservation import IdempotencyKey, ReservationQuantity
 from stocklock.shared.enums import ReservationStatus
 from stocklock.shared.utils import utc_now
 
@@ -17,9 +18,9 @@ def test_reservation_terminal_eligibility(status, target, seconds):
   now = utc_now()
   item = Reservation(
     product_id=uuid4(),
-    quantity=1,
+    quantity=ReservationQuantity(1),
     status=status,
-    key="test",
+    key=IdempotencyKey("test"),
     created_at=now - timedelta(minutes=1),
     expires_at=now + timedelta(seconds=seconds),
   )

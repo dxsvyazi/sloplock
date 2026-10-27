@@ -5,7 +5,8 @@ from uuid import UUID
 from stocklock.domain.entities.reservation import Reservation
 from stocklock.domain.errors import ReservationNotFound
 from stocklock.domain.ports.repositories.reservation_repository import IReservationRepository, ReservationSnapshot
-from stocklock.domain.validation import validate_page
+from stocklock.domain.validation import require_type, validate_page
+from stocklock.domain.value_objects.reservation import IdempotencyKey, ReservationQuantity
 from stocklock.shared.constraints import DEFAULT_PAGE_SIZE
 from stocklock.shared.enums import ReservationStatus
 from stocklock.shared.exceptions import ValidationException
@@ -47,9 +48,12 @@ class ReservationService:
     validate_page(limit)
     return await self.reservations.find_due_ids(start_id=start_id, limit=limit)
 
-  async def find_retry(self, product_id: UUID, key: str, quantity: int) -> Reservation | None:
+  async def find_retry(
+    self, product_id: UUID, key: IdempotencyKey, quantity: ReservationQuantity
+  ) -> Reservation | None:
     """For creation retries, the caller must already hold the product lock."""
-    Reservation.validate_request(key, quantity)
+    require_type(key, IdempotencyKey)
+    require_type(quantity, ReservationQuantity)
 
     existing = await self.reservations.find_by_key(product_id, key)
 

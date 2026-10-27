@@ -15,6 +15,7 @@ from stocklock.domain.errors import ReservationUnavailable
 from stocklock.domain.ports.repositories.reservation_repository import ReservationSnapshot
 from stocklock.domain.services.product_service import ProductService
 from stocklock.domain.services.reservation_service import ReservationService
+from stocklock.domain.value_objects.reservation import IdempotencyKey, ReservationQuantity
 
 
 @dataclass(slots=True)
@@ -26,19 +27,22 @@ class ReserveProductUseCase:
 
   async def execute(self, command: CreateReservationCommand) -> Reservation:
     """Start the configured lifetime after locking; retries retain the original hold."""
+    quantity = ReservationQuantity(command.quantity)
+    key = IdempotencyKey(command.key)
+
     async with self.uow.begin():
       # Product first, then insert only: never lock an existing reservation here.
       await self.products.require(command.product_id, for_update=True)
 
-      existing = await self.reservations.find_retry(command.product_id, command.key, command.quantity)
+      existing = await self.reservations.find_retry(command.product_id, key, quantity)
 
       if existing is not None:
         return existing
 
-      await self.products.hold_stock(command.product_id, command.quantity)
+      await self.products.hold_stock(command.product_id, quantity)
       created_at = await self.reservations.current_time()
 
-      reservation = Reservation(
+      reservation = Reservation.create(
         product_id=command.product_id,
         quantity=command.quantity,
         key=command.key,

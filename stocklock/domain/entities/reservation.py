@@ -1,11 +1,12 @@
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import Any, Self
 from uuid import UUID
 
 from stocklock.domain.entities.base import BaseEntity
 from stocklock.domain.errors import IdempotencyConflict, ReservationUnavailable
-from stocklock.domain.validation import validate_id, validate_idempotency_key, validate_quantity
+from stocklock.domain.validation import require_type, validate_id
+from stocklock.domain.value_objects.reservation import IdempotencyKey, ReservationQuantity
 from stocklock.shared.enums import ReservationStatus
 from stocklock.shared.exceptions import (
   InvalidExpiration,
@@ -22,9 +23,9 @@ class Reservation(BaseEntity):
   __hash__: Any = None
 
   product_id: UUID
-  quantity: int
+  quantity: ReservationQuantity
   status: ReservationStatus = ReservationStatus.active
-  key: str
+  key: IdempotencyKey
   created_at: datetime = field(default_factory=utc_now)
   expires_at: datetime
 
@@ -32,7 +33,8 @@ class Reservation(BaseEntity):
     validate_id(self.id)
     validate_id(self.product_id)
 
-    self.validate_request(self.key, self.quantity)
+    require_type(self.key, IdempotencyKey)
+    require_type(self.quantity, ReservationQuantity)
     self.validate_status(self.status)
 
     created_at, expires_at = as_utc(self.created_at), as_utc(self.expires_at)
@@ -43,10 +45,16 @@ class Reservation(BaseEntity):
     self._set("created_at", created_at)
     self._set("expires_at", expires_at)
 
-  @staticmethod
-  def validate_request(key: str, quantity: int) -> None:
-    validate_idempotency_key(key)
-    validate_quantity(quantity, minimum=1)
+  @classmethod
+  def create(cls, *, product_id: UUID, quantity: int, key: str, created_at: datetime, expires_at: datetime) -> Self:
+    """Create an active hold using the caller's authoritative clock and lifetime policy."""
+    return cls(
+      product_id=product_id,
+      quantity=ReservationQuantity(quantity),
+      key=IdempotencyKey(key),
+      created_at=created_at,
+      expires_at=expires_at,
+    )
 
   @staticmethod
   def validate_status(status: ReservationStatus) -> None:
@@ -63,8 +71,8 @@ class Reservation(BaseEntity):
     if self.status is not ReservationStatus.active:
       raise ValidationException("New reservations must be active")
 
-  def ensure_retry(self, quantity: int) -> None:
-    validate_quantity(quantity, minimum=1)
+  def ensure_retry(self, quantity: ReservationQuantity) -> None:
+    require_type(quantity, ReservationQuantity)
 
     if self.quantity != quantity:
       raise IdempotencyConflict

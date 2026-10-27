@@ -27,7 +27,7 @@ from tests.service_doubles import Products, Reservations, Store
 
 async def seed(store: Store) -> Product:
   async with store.begin():
-    return await ProductService(Products(store)).create(Product(name="Widget", sku="W1", stock_quantity=5))
+    return await ProductService(Products(store)).create(Product.create(name="Widget", sku="W1", stock_quantity=5))
 
 
 def command(product_id: UUID) -> CreateReservationCommand:
@@ -57,7 +57,7 @@ async def test_request_uses_configured_lifetime_and_one_authoritative_creation_i
   item = await usecase.execute(command(product.id))
   assert item.created_at == datetime(2026, 1, 1, tzinfo=timezone.utc)
   assert item.expires_at == datetime(2026, 1, 1, 0, 1, 30, tzinfo=timezone.utc)
-  assert store.products[product.id].stock_quantity == 3
+  assert store.products[product.id].stock_quantity.value == 3
 
 
 async def test_lifetime_begins_after_product_lock_wait() -> None:
@@ -85,7 +85,7 @@ async def test_retry_after_expiration_and_policy_change_preserves_original_hold(
   store.now = first.expires_at
   retry = await flow(store, seconds=3600).execute(command(product.id))
   assert retry == first
-  assert store.products[product.id].stock_quantity == 3
+  assert store.products[product.id].stock_quantity.value == 3
   assert len(store.reservations) == 1
 
 
@@ -94,7 +94,7 @@ async def test_deadline_overflow_rolls_back_stock_hold() -> None:
   product = await seed(store)
   with pytest.raises(ValidationException):
     await flow(store, seconds=90).execute(command(product.id))
-  assert store.products[product.id].stock_quantity == 5
+  assert store.products[product.id].stock_quantity.value == 5
   assert store.reservations == {}
 
 
@@ -132,7 +132,7 @@ async def test_postgresql_hold_gets_full_lifetime_after_waiting_for_product_lock
 
   products = ProductService(ProductRepository(database.manager))
   async with database.uow.begin():
-    product = await products.create(Product(name="Widget", sku="W1", stock_quantity=5))
+    product = await products.create(Product.create(name="Widget", sku="W1", stock_quantity=5))
 
   usecase = ReserveProductUseCase(
     uow=database.uow,

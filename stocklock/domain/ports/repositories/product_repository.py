@@ -4,14 +4,15 @@ from datetime import datetime
 from uuid import UUID
 
 from stocklock.domain.entities.product import Product, ProductDetailField
+from stocklock.domain.value_objects.product import SKU, ProductName, StockDelta, StockQuantity
 from stocklock.shared.constraints import DEFAULT_PAGE_SIZE
 
 
 @dataclass(frozen=True, slots=True)
 class ProductDetailsSnapshot:
   id: UUID
-  name: str
-  sku: str
+  name: ProductName
+  sku: SKU
   updated_at: datetime | None
 
   @classmethod
@@ -22,7 +23,7 @@ class ProductDetailsSnapshot:
 @dataclass(frozen=True, slots=True)
 class ProductStockSnapshot:
   id: UUID
-  stock_quantity: int
+  stock_quantity: StockQuantity
   updated_at: datetime | None
 
   @classmethod
@@ -61,6 +62,6 @@ class IProductRepository(ABC):
     ...
 
   @abstractmethod
-  async def adjust_stock(self, id: UUID, delta: int) -> Product | None:
+  async def adjust_stock(self, id: UUID, delta: StockDelta) -> Product | None:
     """Atomically apply a delta; return None if missing or outside the stock range."""
     ...

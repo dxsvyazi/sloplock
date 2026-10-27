@@ -7,6 +7,7 @@ from sqlalchemy import event, text
 from sqlalchemy.exc import DBAPIError
 
 from stocklock.domain.entities.product import Product
+from stocklock.domain.value_objects.product import StockDelta
 from stocklock.infrastructure.models.product import ProductORM
 from stocklock.infrastructure.models.reservation import ReservationORM
 from stocklock.infrastructure.repositories.confirmation_repository import ConfirmationRepository
@@ -26,7 +27,7 @@ def setup_repositories(database):
 
 
 async def create_product(database, products, stock=10):
-  product = Product(name="Widget", sku="W1", stock_quantity=stock)
+  product = Product.create(name="Widget", sku="W1", stock_quantity=stock)
   async with database.uow.begin():
     await products.create(product)
   return product
@@ -71,7 +72,7 @@ async def test_terminal_workflow_fetches_locked_reservation_only_once(database, 
       "expire": ReservationStatus.expired,
     }[operation]
     assert (await reservations.find_by_id(item.id)).status is expected
-    assert (await products.find_by_id(product.id)).stock_quantity == (8 if operation == "confirm" else 10)
+    assert (await products.find_by_id(product.id)).stock_quantity.value == (8 if operation == "confirm" else 10)
 
 
 async def race(*operations):
@@ -93,8 +94,8 @@ async def test_competing_reservations_never_oversubscribe(database):
   assert sum(not isinstance(result, Exception) for result in results) == 7
   assert sum(isinstance(result, InsufficientStock) for result in results) == 13
   async with database.uow.begin():
-    assert (await products.find_by_id(product.id)).stock_quantity == 0
-    assert sum(item.quantity for item in await reservations.find_many()) == 7
+    assert (await products.find_by_id(product.id)).stock_quantity.value == 0
+    assert sum(item.quantity.value for item in await reservations.find_many()) == 7
 
 
 async def test_concurrent_reservation_retries_hold_stock_once(database):
@@ -105,7 +106,7 @@ async def test_concurrent_reservation_retries_hold_stock_once(database):
   results = await race(*(lambda: reserve(workflows, product, key="retry", quantity=2) for _ in range(8)))
   assert all(result == results[0] for result in results)
   async with database.uow.begin():
-    assert (await products.find_by_id(product.id)).stock_quantity == 8
+    assert (await products.find_by_id(product.id)).stock_quantity.value == 8
     assert len(await reservations.find_many()) == 1
   with pytest.raises(IdempotencyConflict):
     await reserve(workflows, product, key="retry", quantity=3)
@@ -121,7 +122,7 @@ async def test_concurrent_confirmations_return_one_immutable_result(database):
   assert all(result == results[0] for result in results)
   assert await workflows.confirm(item.id) == results[0]
   async with database.uow.begin():
-    assert (await products.find_by_id(product.id)).stock_quantity == 7
+    assert (await products.find_by_id(product.id)).stock_quantity.value == 7
     assert (await reservations.find_by_id(item.id)).status is ReservationStatus.confirmed
     assert await confirmations.find_by_reservation_id(item.id) == results[0]
     assert await database.manager.get_session(raises=True).scalar(text("SELECT count(*) FROM confirmations")) == 1
@@ -150,7 +151,7 @@ async def test_cancellation_and_expiration_return_stock_only_once(database, expi
   assert sum(not isinstance(result, Exception) for result in results) == 1
   assert sum(isinstance(result, ReservationUnavailable) for result in results) == 9
   async with database.uow.begin():
-    assert (await products.find_by_id(product.id)).stock_quantity == 10
+    assert (await products.find_by_id(product.id)).stock_quantity.value == 10
     assert (await reservations.find_by_id(item.id)).status in (ReservationStatus.cancelled, ReservationStatus.expired)
 
 
@@ -177,7 +178,7 @@ async def test_confirmation_coordinates_with_cancel_and_expiration(database, exp
   async with database.uow.begin():
     final = await reservations.find_by_id(item.id)
     confirmation = await confirmations.find_by_reservation_id(item.id)
-    stock = (await products.find_by_id(product.id)).stock_quantity
+    stock = (await products.find_by_id(product.id)).stock_quantity.value
     if final.status is ReservationStatus.confirmed:
       assert not expired
       assert confirmation is not None
@@ -194,7 +195,7 @@ async def test_atomic_deltas_and_partial_details_do_not_lose_updates(database):
 
   async def add_stock():
     async with database.uow.begin():
-      return await products.adjust_stock(product.id, 1)
+      return await products.adjust_stock(product.id, StockDelta(1))
 
   async def rename():
     async with database.uow.begin():
@@ -204,7 +205,7 @@ async def test_atomic_deltas_and_partial_details_do_not_lose_updates(database):
   assert not any(isinstance(result, Exception) for result in results)
   async with database.uow.begin():
     final = await products.find_by_id(product.id)
-    assert (final.name, final.stock_quantity) == ("Renamed", 15)
+    assert (final.name.value, final.stock_quantity.value) == ("Renamed", 15)
 
 
 async def test_absolute_corrections_serialize_with_reservation(database):
@@ -218,7 +219,7 @@ async def test_absolute_corrections_serialize_with_reservation(database):
   results = await race(correction, lambda: reserve(workflows, product, quantity=3))
   assert not any(isinstance(result, Exception) for result in results)
   async with database.uow.begin():
-    assert (await products.find_by_id(product.id)).stock_quantity in (5, 8)
+    assert (await products.find_by_id(product.id)).stock_quantity.value in (5, 8)
 
 
 @pytest.mark.parametrize("operation", ["reserve", "confirm", "cancel", "expire"])
@@ -257,7 +258,7 @@ async def test_multistep_failure_rolls_back_all_changes(database, operation):
     else:
       await getattr(workflows, operation)(item.id)
   async with database.uow.begin():
-    assert (await products.find_by_id(product.id)).stock_quantity == (10 if operation == "reserve" else 7)
+    assert (await products.find_by_id(product.id)).stock_quantity.value == (10 if operation == "reserve" else 7)
     assert len(await reservations.find_many()) == (0 if operation == "reserve" else 1)
     if item:
       assert (await reservations.find_by_id(item.id)).status is ReservationStatus.active
@@ -332,7 +333,7 @@ async def test_confirmation_waiting_on_lock_cannot_confirm_after_expiration(data
       assert await asyncio.wait_for(task, 5) is None
     assert (await workflows.expire(item.id)).status is ReservationStatus.expired
     async with database.uow.begin():
-      assert (await products.find_by_id(product.id)).stock_quantity == 10
+      assert (await products.find_by_id(product.id)).stock_quantity.value == 10
       assert await confirmations.find_by_reservation_id(item.id) is None
   finally:
     task.cancel()
@@ -350,7 +351,7 @@ async def test_locked_reads_refresh_previously_loaded_orm_rows(database, kind):
     await start.wait()
     if kind == "product":
       async with database.uow.begin():
-        await products.adjust_stock(product.id, 2)
+        await products.adjust_stock(product.id, StockDelta(2))
     else:
       await workflows.cancel(item.id)
 
@@ -366,8 +367,8 @@ async def test_locked_reads_refresh_previously_loaded_orm_rows(database, kind):
       await asyncio.wait_for(task, 5)
       if kind == "product":
         assert loaded.stock_quantity == 7
-        assert (await products.find_by_id(product.id, for_update=True)).stock_quantity == 9
-        assert (await products.adjust_stock(product.id, -1)).stock_quantity == 8
+        assert (await products.find_by_id(product.id, for_update=True)).stock_quantity.value == 9
+        assert (await products.adjust_stock(product.id, StockDelta(-1))).stock_quantity.value == 8
       else:
         assert loaded.status is ReservationStatus.active
         assert (await reservations.find_by_id(item.id, for_update=True)).status is ReservationStatus.cancelled
@@ -393,7 +394,7 @@ async def test_stock_return_overflow_rolls_back_terminal_transition(database):
     await workflows.cancel(item.id)
   async with database.uow.begin():
     assert (await reservations.find_by_id(item.id)).status is ReservationStatus.active
-    assert (await products.find_by_id(product.id)).stock_quantity == 2**31 - 1
+    assert (await products.find_by_id(product.id)).stock_quantity.value == 2**31 - 1
 
 
 @pytest.mark.parametrize("method", ["confirm", "cancel", "expire"])
@@ -416,5 +417,5 @@ async def test_invalid_reservation_does_not_change_stock(database):
   with pytest.raises(NotFound):
     await workflows.reserve(uuid4(), 1, "test")
   async with database.uow.begin():
-    assert (await products.find_by_id(product.id)).stock_quantity == 10
+    assert (await products.find_by_id(product.id)).stock_quantity.value == 10
     assert await reservations.find_many() == []
