@@ -50,6 +50,13 @@ async def transition(
   if reservation is None:
     return None
   original = ReservationSnapshot.capture(reservation)
-  if not reservation.transition(target, await service.current_time()):
+  Reservation.validate_target(target)
+  if target is ReservationStatus.cancelled:
+    changed = reservation.cancel()
+  elif target is ReservationStatus.confirmed:
+    changed = reservation.confirm(await service.current_time())
+  else:
+    changed = reservation.expire(await service.current_time())
+  if not changed:
     return None
   return await service.save_transition(reservation, original=original)

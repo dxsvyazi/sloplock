@@ -130,6 +130,43 @@ async def test_release_flow_returns_units_once(flows, name):
     )
 
 
+@pytest.mark.parametrize("seconds", [-1, 0, 1])
+async def test_cancel_releases_stock_without_reading_clock(flows, monkeypatch, seconds):
+  store, build = flows
+  product = await seed(flows)
+  item = await reserve(flows, product.id)
+  store.now = item.expires_at + timedelta(seconds=seconds)
+
+  async def unavailable_clock(self):
+    raise AssertionError("Cancellation must not query the clock")
+
+  monkeypatch.setattr(Reservations, "current_time", unavailable_clock)
+  result = await build("CancelReservationUseCase", "products", "reservations").execute(
+    CancelReservationCommand(reservation_id=item.id)
+  )
+
+  assert result.status is ReservationStatus.cancelled
+  assert store.products[product.id].stock_quantity.value == 5
+  assert store.confirmations == {}
+
+
+async def test_rejected_confirmation_does_not_attempt_persistence(flows):
+  store, build = flows
+  product = await seed(flows)
+  item = await reserve(flows, product.id)
+  store.now = item.expires_at
+  store.fail = "save_transition"
+
+  with pytest.raises(ReservationUnavailable, match="Reservation is no longer active and unexpired"):
+    await build("ConfirmReservationUseCase", "reservations", "confirmations").execute(
+      ConfirmReservationCommand(reservation_id=item.id)
+    )
+
+  assert store.reservations[item.id].status is ReservationStatus.active
+  assert store.products[product.id].stock_quantity.value == 3
+  assert store.confirmations == {}
+
+
 @pytest.mark.parametrize("operation", ["reserve", "confirm", "cancel", "expire"])
 async def test_multistep_failures_roll_back_business_flow(flows, operation):
   store, build = flows

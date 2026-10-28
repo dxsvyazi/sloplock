@@ -84,36 +84,26 @@ class Reservation(BaseEntity):
     if self.status is not ReservationStatus.confirmed:
       raise ReservationUnavailable("A confirmation requires a confirmed reservation")
 
-  def can_transition(self, target: ReservationStatus, now: datetime) -> bool:
-    self.validate_target(target)
+  def confirm(self, now: datetime) -> bool:
+    if self.status is not ReservationStatus.active or as_utc(now) >= self.expires_at:
+      return False
 
+    self._set("status", ReservationStatus.confirmed)
+
+    return True
+
+  def cancel(self) -> bool:
     if self.status is not ReservationStatus.active:
       return False
 
-    now = as_utc(now)
-
-    if target is ReservationStatus.confirmed:
-      return now < self.expires_at
-
-    if target is ReservationStatus.expired:
-      return now >= self.expires_at
+    self._set("status", ReservationStatus.cancelled)
 
     return True
-
-  def transition(self, target: ReservationStatus, now: datetime) -> bool:
-    if not self.can_transition(target, now):
-      return False
-
-    self._set("status", target)
-
-    return True
-
-  def confirm(self, now: datetime) -> None:
-    if not self.transition(ReservationStatus.confirmed, now):
-      raise ReservationUnavailable("Reservation is no longer active and unexpired")
-
-  def cancel(self, now: datetime) -> bool:
-    return self.transition(ReservationStatus.cancelled, now)
 
   def expire(self, now: datetime) -> bool:
-    return self.transition(ReservationStatus.expired, now)
+    if self.status is not ReservationStatus.active or as_utc(now) < self.expires_at:
+      return False
+
+    self._set("status", ReservationStatus.expired)
+
+    return True

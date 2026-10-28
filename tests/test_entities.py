@@ -109,10 +109,16 @@ def test_reservation_rehydrates_history_and_normalizes_utc():
 def test_reservation_transition_is_guarded_and_irreversible(target):
   item = hold()
   instant = item.expires_at if target is ReservationStatus.expired else NOW
-  assert item.transition(target, instant) is True
+  if target is ReservationStatus.cancelled:
+    assert item.cancel() is True
+  elif target is ReservationStatus.confirmed:
+    assert item.confirm(instant) is True
+  else:
+    assert item.expire(instant) is True
   assert item.status is target
-  for other in (ReservationStatus.confirmed, ReservationStatus.expired, ReservationStatus.cancelled):
-    assert item.transition(other, item.expires_at) is False
+  assert item.cancel() is False
+  assert item.confirm(NOW) is False
+  assert item.expire(item.expires_at) is False
   with pytest.raises(FrozenInstanceError):
     item.quantity = 0
 
@@ -121,12 +127,11 @@ def test_expiration_boundary_and_confirmation_factory():
   item = hold()
   with pytest.raises(ReservationUnavailable):
     Confirmation.from_reservation(item)
-  with pytest.raises(ReservationUnavailable):
-    item.confirm(item.expires_at)
+  assert item.confirm(item.expires_at) is False
   assert item.status is ReservationStatus.active
   assert item.expire(item.expires_at)
   other = hold()
-  other.confirm(NOW)
+  assert other.confirm(NOW) is True
   result = Confirmation.from_reservation(other)
   assert result.reservation_id == other.id
   with pytest.raises(FrozenInstanceError):

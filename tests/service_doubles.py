@@ -187,9 +187,14 @@ class Reservations(IReservationRepository):
     Reservation.validate_target(reservation.status)
     if previous_status is not ReservationStatus.active or current is None:
       return None
-    if not current.can_transition(reservation.status, self.store.now):
+    if reservation.status is ReservationStatus.cancelled:
+      changed = current.cancel()
+    elif reservation.status is ReservationStatus.confirmed:
+      changed = current.confirm(self.store.now)
+    else:
+      changed = current.expire(self.store.now)
+    if not changed:
       return None
-    object.__setattr__(current, "status", reservation.status)
     return deepcopy(current)
 
 

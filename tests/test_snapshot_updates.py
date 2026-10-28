@@ -139,7 +139,7 @@ async def test_reservation_save_rejects_snapshot_from_another_entity():
   item, other = Reservation(**values), Reservation(**values)
   async with store.begin():
     original = reservation_snapshot(other)
-    item.cancel(store.now)
+    item.cancel()
     with pytest.raises(ValidationException):
       await service.save_transition(item, original=original)
     assert store.reservations == {}

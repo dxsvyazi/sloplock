@@ -100,7 +100,7 @@ class CancelReservationUseCase:
 
       original = ReservationSnapshot.capture(reservation)
 
-      if not reservation.cancel(await self.reservations.current_time()):
+      if not reservation.cancel():
         raise ReservationUnavailable.not_active()
 
       reservation = await self.reservations.save_transition(reservation, original=original)

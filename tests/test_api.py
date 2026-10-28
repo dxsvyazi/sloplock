@@ -205,7 +205,7 @@ async def test_failed_requests_use_real_workflows_and_central_error_handlers(api
 
     item = deepcopy(RESERVATION)
     if scenario == "terminal":
-      item.cancel(store.now)
+      item.cancel()
     store.reservations[item.id] = item
   with container.override(
     {
