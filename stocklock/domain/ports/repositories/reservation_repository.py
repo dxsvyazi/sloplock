@@ -49,6 +49,15 @@ class IReservationRepository(ABC):
     ...
 
   @abstractmethod
+  async def expire_due(self, reservation_ids: tuple[UUID, ...]) -> list[Reservation]:
+    """Lock requested active, due holds without waiting on locked reservations.
+
+    Transition them to expired and return only changed rows. Caller must restore
+    their stock in this same transaction. Skipped holds can be retried later.
+    """
+    ...
+
+  @abstractmethod
   async def create(self, reservation: Reservation) -> Reservation:
     """Insert an active hold; caller must decrement stock in this same transaction."""
     ...

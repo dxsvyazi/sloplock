@@ -8,7 +8,7 @@ from wireup import AsyncContainer, create_async_container, injectable
 from stocklock.application.policies.reservation import ReservationTimePolicy
 from stocklock.application.ports.uow import IUnitOfWork
 from stocklock.application.usecases.confirmations import ConfirmReservationUseCase, GetConfirmationUseCase
-from stocklock.application.usecases.expiration import ListDueReservationsUseCase
+from stocklock.application.usecases.expiration import ExpireReservationsUseCase, ListDueReservationsUseCase
 from stocklock.application.usecases.product import (
   CorrectProductStockUseCase,
   CreateProductUseCase,
@@ -131,6 +131,13 @@ def list_due_reservations_use_case(uow: IUnitOfWork, reservations: ReservationSe
 
 
 @injectable(lifetime="scoped")
+def expire_reservations_use_case(
+  uow: IUnitOfWork, reservations: ReservationService, products: ProductService
+) -> ExpireReservationsUseCase:
+  return ExpireReservationsUseCase(uow, reservations, products)
+
+
+@injectable(lifetime="scoped")
 def list_product_reservations_use_case(
   uow: IUnitOfWork, products: ProductService, reservations: ReservationService
 ) -> ListProductReservationsUseCase:
@@ -241,6 +248,7 @@ def create_container(
       get_reservation_use_case,
       list_reservations_use_case,
       list_due_reservations_use_case,
+      expire_reservations_use_case,
       list_product_reservations_use_case,
       cancel_reservation_use_case,
       expire_reservation_use_case,

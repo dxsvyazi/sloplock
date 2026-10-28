@@ -170,6 +170,15 @@ class Reservations(IReservationRepository):
     self.store.reservations[reservation.id] = deepcopy(reservation)
     return deepcopy(reservation)
 
+  async def expire_due(self, reservation_ids: tuple[UUID, ...]) -> list[Reservation]:
+    self.store.check("expire_due")
+    expired = []
+    for reservation_id in sorted(set(reservation_ids)):
+      current = self.store.reservations.get(reservation_id)
+      if current is not None and current.expire(self.store.now):
+        expired.append(deepcopy(current))
+    return expired
+
   async def save_transition(
     self, reservation: Reservation, *, previous_status: ReservationStatus
   ) -> Reservation | None:

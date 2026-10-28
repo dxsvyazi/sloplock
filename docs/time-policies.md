@@ -55,9 +55,12 @@ more stock. Confirmation still requires `now < expires_at`; expiration applies a
 Run `python -m stocklock.infrastructure.workers.expiration` alongside the API;
 Compose starts this worker after migrations. The API process alone does not
 start background jobs. Stored statuses and stock update eventually when swept.
-The worker processes bounded pages and individual transactions; failed holds
-are logged and revisited, while later candidates continue. SIGTERM/SIGINT stop
-processing between holds and close dependencies.
+The worker processes bounded pages of up to 100 reservations in one transaction
+per page. It skips locked reservations, transitions due active holds in bulk,
+and restores their quantities once per product in UUID order. Failed pages roll
+back and retry individually; failed holds are logged and revisited while later
+candidates continue. SIGTERM/SIGINT stop processing between batches (or between
+individual fallback attempts) and close dependencies.
 
 Retention settings remain configuration for future workers and do not delete records.
 The current confirmation retry promise is unchanged, including when finite
@@ -70,6 +73,6 @@ No configurable grace period is introduced: confirmation at or after the deadlin
 would conflict with the service's expiration invariant. See `.env.example` for all
 available settings without credentials.
 
-Worker database operations have a 30-second timeout. A locked or failed hold
-rolls back and is revisited on a later sweep; later candidates continue. Compose
-allows 35 seconds for graceful worker shutdown.
+Worker database operations have a 30-second timeout. A timed-out batch rolls back
+before individual fallback begins. Skipped or failed holds are revisited on a
+later sweep. Compose allows 35 seconds for graceful worker shutdown.

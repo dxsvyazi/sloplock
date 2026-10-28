@@ -2,6 +2,7 @@ from dataclasses import dataclass, replace
 from uuid import UUID
 
 from stocklock.domain.entities.product import _ALLOWED_DETAILS, Product
+from stocklock.domain.entities.reservation import Reservation
 from stocklock.domain.errors import InsufficientStock, ProductNotFound, StockLimitExceeded
 from stocklock.domain.ports.repositories.product_repository import (
   IProductRepository,
@@ -12,7 +13,7 @@ from stocklock.domain.ports.repositories.product_repository import (
 from stocklock.domain.validation import require_type, validate_page
 from stocklock.domain.value_objects.product import StockDelta
 from stocklock.domain.value_objects.reservation import ReservationQuantity
-from stocklock.shared.constraints import DEFAULT_PAGE_SIZE
+from stocklock.shared.constraints import DEFAULT_PAGE_SIZE, MAX_STOCK_QUANTITY
 from stocklock.shared.exceptions import ValidationException
 
 
@@ -84,3 +85,14 @@ class ProductService:
       raise StockLimitExceeded
 
     return product
+
+  async def return_stock_many(self, reservations: "list[Reservation]") -> None:
+    """Return transitioned holds once per product, locking products in UUID order."""
+    quantities: dict[UUID, int] = {}
+    for reservation in reservations:
+      quantities[reservation.product_id] = quantities.get(reservation.product_id, 0) + reservation.quantity.value
+
+    for product_id, quantity in sorted(quantities.items()):
+      if quantity > MAX_STOCK_QUANTITY:
+        raise StockLimitExceeded
+      await self.return_stock(product_id, ReservationQuantity(quantity))

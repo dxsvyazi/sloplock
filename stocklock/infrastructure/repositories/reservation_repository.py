@@ -81,6 +81,31 @@ class ReservationRepository(SessionRepository, IReservationRepository):
 
     return reservation
 
+  async def expire_due(self, reservation_ids: tuple[UUID, ...]) -> list[Reservation]:
+    eligible = (
+      select(ReservationORM.id)
+      .where(
+        ReservationORM.id.in_(reservation_ids),
+        ReservationORM.status == ReservationStatus.active,
+        ReservationORM.expires_at <= func.clock_timestamp(),
+      )
+      .order_by(ReservationORM.id)
+      .with_for_update(skip_locked=True)
+      .cte("due_reservations")
+    )
+    rows = await self.session.scalars(
+      update(ReservationORM)
+      .where(
+        ReservationORM.id.in_(select(eligible.c.id)),
+        ReservationORM.status == ReservationStatus.active,
+        ReservationORM.expires_at <= func.clock_timestamp(),
+      )
+      .values(status=ReservationStatus.expired)
+      .returning(ReservationORM)
+      .execution_options(synchronize_session=False, populate_existing=True)
+    )
+    return [orm_to_domain(row) for row in rows]
+
   async def save_transition(
     self, reservation: Reservation, *, previous_status: ReservationStatus
   ) -> Reservation | None:

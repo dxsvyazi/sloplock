@@ -74,6 +74,9 @@ creation permission to include database, migration, and independent transaction
 race tests. Tests use isolated schemas and remove them afterward. Without the
 URL, PostgreSQL tests are explicitly skipped.
 
-Worker database operations have a 30-second timeout. A locked or failed hold
-rolls back and is revisited on a later sweep; later candidates continue. Compose
-allows 35 seconds for graceful worker shutdown.
+The expiration worker processes up to 100 reservations per transaction. It skips
+locked reservations and returns stock once per affected product; transitions and
+stock returns commit together. Failed batches roll back and retry individually
+so one failed hold does not prevent other candidates from expiring. Skipped or
+failed holds are revisited on later sweeps. Database operations have a 30-second
+timeout. Compose allows 35 seconds for graceful worker shutdown.

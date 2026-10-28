@@ -28,7 +28,7 @@ into handlers/use cases; do not resolve services inside business logic.
   using a stale, unlocked entity. `adjust_stock` explicitly uses a database
   timestamp; `_update` does not inject a competing timestamp.
 - Reservations: `create`, `find_by_id`, `find_by_key`, `find_many`,
-  `current_time`, `save_transition`. Lists optionally filter by product and status.
+  `current_time`, `save_transition`, `find_due_ids`, `expire_due`. Lists optionally filter by product and status.
   `save_transition` accepts an already mutated, locked entity and its previous
   status. It accepts only confirmed/expired/cancelled targets, and succeeds
   only from active. Confirmation requires `now < expires_at`; expiration
@@ -38,7 +38,9 @@ into handlers/use cases; do not resolve services inside business logic.
   authoritative time after locking, and invokes the entity transition. The
   service compares statuses and passes the entity and previous status to the
   adapter. Conditional write guards remain in the adapter; it does not mutate
-  domain entities.
+  domain entities. `expire_due` locks requested active, overdue holds with
+  `FOR UPDATE SKIP LOCKED`, bulk-transitions them to expired, and returns only
+  changed rows. Its caller must restore their stock in the same transaction.
 - Confirmations: `create_or_find` (`create` remains a compatibility entry point),
   `find_by_reservation_id`. Creation requires a
   confirmed reservation and returns the original result on repeated calls.
@@ -98,10 +100,11 @@ Lock ordering for the supplied workflows is:
    lookup does not lock an existing reservation.
 2. Confirm: reservation row only, then insert the confirmation.
 3. Cancel/expire: reservation row, then update the product row.
+4. Bulk expire: eligible reservation rows in UUID order, then product updates in UUID order.
 
 Do not add a path that locks a product and then locks an existing reservation:
-that would invert cancellation's order. Batch operations are not provided;
-future batches must acquire locks in a consistent order. Custom multi-aggregate
+that would invert cancellation's order. Bulk expiration maintains this order
+and skips already locked reservations. Custom multi-aggregate
 workflows need their own invariant/locking design. This is not a blanket
 serializability guarantee for arbitrary read-then-write operations or raw SQL.
 At stronger transaction isolation levels, serialization failures must propagate

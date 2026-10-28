@@ -10,9 +10,10 @@ from uuid import UUID
 from wireup import AsyncContainer
 
 from stocklock.application.commands.common import PageCommand
-from stocklock.application.commands.reservation import ExpireReservationCommand
-from stocklock.application.usecases.expiration import ListDueReservationsUseCase
+from stocklock.application.commands.reservation import ExpireReservationCommand, ExpireReservationsCommand
+from stocklock.application.usecases.expiration import ExpireReservationsUseCase, ListDueReservationsUseCase
 from stocklock.application.usecases.reservation import TryExpireReservationUseCase
+from stocklock.domain.validation import validate_page
 from stocklock.project.configs.time_policy import TimePolicySettings
 from stocklock.project.container import create_container
 
@@ -29,6 +30,7 @@ class ExpirationWorker:
   _cursor: UUID | None = field(default=None, init=False)
 
   def __post_init__(self) -> None:
+    validate_page(self.batch_size)
     if self.interval <= timedelta(0) or self.max_batches < 1 or self.operation_timeout <= timedelta(0):
       raise ValueError("Worker interval, batch count, and operation timeout must be positive")
 
@@ -46,24 +48,36 @@ class ExpirationWorker:
         self._cursor = None
         return
 
-      for reservation_id in ids:
-        if stop is not None and stop.is_set():
-          return
+      if stop is not None and stop.is_set():
+        return
 
-        try:
-          async with asyncio.timeout(self.operation_timeout.total_seconds()):
-            async with self.container.enter_scope() as scope:
-              expire = await scope.get(TryExpireReservationUseCase)
-
-              await expire.execute(ExpireReservationCommand(reservation_id=reservation_id))
-        except Exception:
-          logger.exception("Failed to expire reservation %s", reservation_id)
+      try:
+        async with asyncio.timeout(self.operation_timeout.total_seconds()):
+          async with self.container.enter_scope() as scope:
+            expire = await scope.get(ExpireReservationsUseCase)
+            await expire.execute(ExpireReservationsCommand(reservation_ids=tuple(ids)))
+      except Exception:
+        logger.exception("Bulk expiration failed; retrying %s reservations individually", len(ids))
+        await self._expire_individually(ids, stop=stop)
       # Advance even past failed holds; revisit failures on the next sweep.
       self._cursor = ids[-1]
 
       if len(ids) < self.batch_size:
         self._cursor = None
         return
+
+  async def _expire_individually(self, ids: list[UUID], *, stop: asyncio.Event | None) -> None:
+    for reservation_id in ids:
+      if stop is not None and stop.is_set():
+        return
+
+      try:
+        async with asyncio.timeout(self.operation_timeout.total_seconds()):
+          async with self.container.enter_scope() as scope:
+            expire = await scope.get(TryExpireReservationUseCase)
+            await expire.execute(ExpireReservationCommand(reservation_id=reservation_id))
+      except Exception:
+        logger.exception("Failed to expire reservation %s", reservation_id)
 
   async def run(self, stop: asyncio.Event) -> None:
     while not stop.is_set():

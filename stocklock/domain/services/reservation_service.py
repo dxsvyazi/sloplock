@@ -5,7 +5,7 @@ from uuid import UUID
 from stocklock.domain.entities.reservation import Reservation
 from stocklock.domain.errors import ReservationNotFound
 from stocklock.domain.ports.repositories.reservation_repository import IReservationRepository, ReservationSnapshot
-from stocklock.domain.validation import require_type, validate_page
+from stocklock.domain.validation import require_type, validate_id, validate_page
 from stocklock.domain.value_objects.reservation import IdempotencyKey, ReservationQuantity
 from stocklock.shared.constraints import DEFAULT_PAGE_SIZE
 from stocklock.shared.enums import ReservationStatus
@@ -47,6 +47,12 @@ class ReservationService:
   async def list_due_ids(self, *, start_id: UUID | None = None, limit: int = DEFAULT_PAGE_SIZE) -> "list[UUID]":
     validate_page(limit)
     return await self.reservations.find_due_ids(start_id=start_id, limit=limit)
+
+  async def expire_due(self, reservation_ids: tuple[UUID, ...]) -> "list[Reservation]":
+    validate_page(len(reservation_ids))
+    for reservation_id in reservation_ids:
+      validate_id(reservation_id)
+    return await self.reservations.expire_due(reservation_ids)
 
   async def find_retry(
     self, product_id: UUID, key: IdempotencyKey, quantity: ReservationQuantity

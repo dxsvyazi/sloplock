@@ -28,6 +28,11 @@ class ExpireReservationCommand(GetReservationCommand):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class ExpireReservationsCommand:
+  reservation_ids: tuple[UUID, ...]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ListReservationsCommand(PageCommand):
   status: ReservationStatus | None = None
 

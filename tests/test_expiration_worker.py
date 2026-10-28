@@ -78,8 +78,8 @@ async def test_failed_hold_rolls_back_and_does_not_starve_later_pages(database, 
     await container.close()
 
 
-async def test_cancellation_propagates_from_per_hold_workflow(database, monkeypatch):
-  from stocklock.application.usecases.reservation import TryExpireReservationUseCase
+async def test_cancellation_propagates_from_bulk_workflow(database, monkeypatch):
+  from stocklock.application.usecases.expiration import ExpireReservationsUseCase
   from stocklock.infrastructure.workers.expiration import ExpirationWorker
 
   await seed(database, count=1)
@@ -87,11 +87,77 @@ async def test_cancellation_propagates_from_per_hold_workflow(database, monkeypa
   async def cancel(self, command):
     raise asyncio.CancelledError
 
-  monkeypatch.setattr(TryExpireReservationUseCase, "execute", cancel)
+  monkeypatch.setattr(ExpireReservationsUseCase, "execute", cancel)
   container = create_container(session_maker=async_sessionmaker(database.engine, expire_on_commit=False))
   try:
     with pytest.raises(asyncio.CancelledError):
       await ExpirationWorker(container, timedelta(seconds=1)).run_once()
+  finally:
+    await container.close()
+
+
+async def test_worker_uses_one_bulk_workflow_for_a_page(database, monkeypatch):
+  from stocklock.application.usecases.reservation import TryExpireReservationUseCase
+  from stocklock.infrastructure.workers.expiration import ExpirationWorker
+
+  pairs = await seed(database)
+
+  async def individual_is_unexpected(self, command):
+    pytest.fail("Successful bulk expiration must not use individual workflows")
+
+  monkeypatch.setattr(TryExpireReservationUseCase, "execute", individual_is_unexpected)
+  container = create_container(session_maker=async_sessionmaker(database.engine, expire_on_commit=False))
+  try:
+    await ExpirationWorker(container, timedelta(seconds=1)).run_once()
+    async with database.uow.begin():
+      for _, item in pairs:
+        assert (await ReservationRepository(database.manager).find_by_id(item.id)).status is ReservationStatus.expired
+  finally:
+    await container.close()
+
+
+async def test_bulk_failure_falls_back_without_starving_other_holds(database, monkeypatch):
+  from stocklock.infrastructure.workers.expiration import ExpirationWorker
+
+  pairs = await seed(database)
+  original = ProductRepository.adjust_stock
+
+  async def fail_first(self, id, delta):
+    if id == pairs[0][0].id:
+      raise RuntimeError("Injected stock return failure")
+    return await original(self, id, delta)
+
+  monkeypatch.setattr(ProductRepository, "adjust_stock", fail_first)
+  container = create_container(session_maker=async_sessionmaker(database.engine, expire_on_commit=False))
+  try:
+    await ExpirationWorker(container, timedelta(seconds=1)).run_once()
+    async with database.uow.begin():
+      for index, (product, item) in enumerate(pairs):
+        assert (await ProductRepository(database.manager).find_by_id(product.id)).stock_quantity.value == (index != 0)
+        assert (await ReservationRepository(database.manager).find_by_id(item.id)).status is (
+          ReservationStatus.active if index == 0 else ReservationStatus.expired
+        )
+  finally:
+    await container.close()
+
+
+async def test_bulk_timeout_falls_back_to_individual_expiration(database, monkeypatch):
+  from stocklock.application.usecases.expiration import ExpireReservationsUseCase
+  from stocklock.infrastructure.workers.expiration import ExpirationWorker
+
+  pairs = await seed(database)
+
+  async def stall(self, command):
+    await asyncio.Event().wait()
+
+  monkeypatch.setattr(ExpireReservationsUseCase, "execute", stall)
+  container = create_container(session_maker=async_sessionmaker(database.engine, expire_on_commit=False))
+  try:
+    await ExpirationWorker(container, timedelta(seconds=1), operation_timeout=timedelta(milliseconds=100)).run_once()
+    async with database.uow.begin():
+      for product, item in pairs:
+        assert (await ProductRepository(database.manager).find_by_id(product.id)).stock_quantity.value == 1
+        assert (await ReservationRepository(database.manager).find_by_id(item.id)).status is ReservationStatus.expired
   finally:
     await container.close()
 

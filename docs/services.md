@@ -156,9 +156,10 @@ in the same transaction. It never decrements available stock again.
 
 Cancellation and explicit expiration lock the reservation and raise `ReservationNotFound`
 when absent or `ReservationUnavailable` when ineligible. Successful requests return
-the transitioned reservation. Worker cleanup uses `TryExpireReservationUseCase`,
-which returns None for missing or ineligible candidates, including holds another
-transaction already processed. Only a successful transition returns units. A stock overflow
+the transitioned reservation. Worker cleanup uses `ExpireReservationsUseCase`
+for each page, with `TryExpireReservationUseCase` as fallback on batch failure.
+The individual fallback returns None for missing or ineligible candidates,
+including holds another transaction already processed. Only a successful transition returns units. A stock overflow
 raises `StockLimitExceeded`, rolling back the transition. Other required entity
 lookups raise `NotFound`; an ineligible confirmation raises
 `ReservationUnavailable`. Invalid input raises `ValidationException` (a `ValueError`). HTTP translation
@@ -209,13 +210,16 @@ Keys preserve exact identity, with 1–256 Unicode characters and at most 1,024
 UTF-8 bytes. NUL and surrounding whitespace are rejected at input boundaries.
 
 `ListDueReservationsUseCase` selects bounded due IDs in a read transaction. The
-infrastructure expiration worker releases that scope before invoking one expiry
-use case per candidate. Each failure rolls back only that hold, is logged, and
-does not prevent later pages progressing. Confirmation and cancellation continue
-to coordinate through the same reservation locks.
+infrastructure expiration worker releases that scope before invoking
+`ExpireReservationsUseCase` once per page. The bulk repository primitive skips
+locked rows and transitions only active, due holds. `ProductService.return_stock_many`
+groups returned quantities and updates products in UUID order. All changes commit
+together; a batch failure rolls back before individual fallback, preserving later
+page progress. Confirmation and cancellation coordinate through the same reservation locks.
 
-Worker database operations have a 30-second timeout. A locked or failed hold
-rolls back and is revisited on a later sweep; later candidates continue. Compose
+Worker database operations have a 30-second timeout. Locked holds are skipped;
+failed batches roll back and retry individually. Later sweeps revisit skipped
+or failed holds. Compose
 allows 35 seconds for graceful worker shutdown.
 
 ## Validation ownership
