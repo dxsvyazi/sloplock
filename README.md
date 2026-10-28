@@ -16,10 +16,11 @@ uv run alembic upgrade head
 uv run python main.py
 ```
 
-Run the expiration worker in a separate process:
+Run each worker in a separate process:
 
 ```sh
 uv run python -m stocklock.infrastructure.workers.expiration
+uv run python -m stocklock.infrastructure.workers.retention
 ```
 
 `SERVICE_HOST` defaults to `0.0.0.0`, `SERVICE_PORT` to `8000`, and
@@ -35,8 +36,8 @@ docker compose up --build
 ```
 
 Compose waits for PostgreSQL health, applies Alembic migrations, then starts the
-API and expiration worker. Both `dev` and `prod` image targets install locked
-runtime dependencies. PostgreSQL is pinned to version 18 and stores its cluster
+API, expiration worker, and retention worker. Both `dev` and `prod` image targets
+install locked runtime dependencies. PostgreSQL is pinned to version 18 and stores its cluster
 under the volume mounted at `/var/lib/postgresql`; migrate an existing cluster
 before reusing a volume initialized by a different major version or layout.
 
@@ -57,7 +58,27 @@ Confirmation rejects holds at or after their deadline even before cleanup.
 Stored status and available inventory update when the expiration worker runs;
 GET/list endpoints expose that stored state. The default sweep interval is
 60 seconds. Run the worker alongside the API in deployments outside Compose.
-Retention deletion remains unimplemented.
+
+Terminal reservations and their confirmations are retained for **30 days** by
+default. Run the retention worker alongside the API; Compose starts it after
+migrations. It deletes history in atomic batches without changing stock or
+removing active reservations or products. Retention starts at the stored UTC
+terminal transition time, including when an overdue hold is actually expired.
+Migration `0003_retention` gives existing terminal records a fresh retention
+window because their original transition times are unavailable.
+
+Set `EXPIRED_RESERVATION_RETENTION_SECONDS`,
+`CANCELLED_RESERVATION_RETENTION_SECONDS`, and `CONFIRMATION_RETENTION_SECONDS`
+to configure each terminal state; `0` keeps that state's history indefinitely.
+Confirmed reservations and confirmations are deleted together. Retention is a
+minimum age for eligibility, not an exact deletion deadline: sweep scheduling,
+backlogs, and skipped locks can delay removal. Increasing retention cannot
+restore records already deleted.
+
+Reservation retries and confirmation retrieval work while the original records
+exist. After deletion, lookups and confirmation retries return HTTP 404, and the
+reservation's idempotency key can create a new hold. Operators own historical
+exports, replication, backups, and retention for externally collected logs.
 
 See [services](docs/services.md), [transactions](docs/repositories.md), and
 [time policies](docs/time-policies.md) for details.
@@ -80,3 +101,13 @@ stock returns commit together. Failed batches roll back and retry individually
 so one failed hold does not prevent other candidates from expiring. Skipped or
 failed holds are revisited on later sweeps. Database operations have a 30-second
 timeout. Compose allows 35 seconds for graceful worker shutdown.
+
+The retention worker runs immediately on startup, then every 86,400 seconds by
+default. Each sweep deletes at most `RETENTION_MAX_BATCHES` (default 100) batches
+of `RETENTION_BATCH_SIZE` (default 100, maximum 100). Its per-batch timeout is
+`RETENTION_OPERATION_TIMEOUT_SECONDS` (default 30). Locked rows are skipped and
+revisited later; failed or timed-out batches roll back and retry on a later sweep.
+Set `RETENTION_CLEANUP_INTERVAL_SECONDS` to change the sweep interval. If all
+three retention settings are zero, the CLI exits successfully without connecting
+to the database. Increase Compose's retention `stop_grace_period` when increasing
+the operation timeout; leave time for rollback and connection shutdown.

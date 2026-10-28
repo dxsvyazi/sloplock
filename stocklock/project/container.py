@@ -6,10 +6,12 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from wireup import AsyncContainer, create_async_container, injectable
 
 from stocklock.application.policies.reservation import ReservationTimePolicy
+from stocklock.application.policies.retention import RetentionPolicy
 from stocklock.application.ports.clock import IClock
 from stocklock.application.ports.uow import IUnitOfWork
 from stocklock.application.usecases.confirmations import ConfirmReservationUseCase, GetConfirmationUseCase
 from stocklock.application.usecases.expiration import ExpireReservationsUseCase, ListDueReservationsUseCase
+from stocklock.application.usecases.retention import CleanupRetentionUseCase
 from stocklock.application.usecases.product import (
   CorrectProductStockUseCase,
   CreateProductUseCase,
@@ -45,6 +47,22 @@ from stocklock.project.configs.time_policy import TimePolicySettings
 @injectable(lifetime="singleton")
 def reservation_time_policy(settings: TimePolicySettings) -> ReservationTimePolicy:
   return ReservationTimePolicy(lifetime=settings.reservation_lifetime)
+
+
+@injectable(lifetime="singleton")
+def retention_policy(settings: TimePolicySettings) -> RetentionPolicy:
+  return RetentionPolicy(
+    expired=settings.expired_reservation_retention,
+    cancelled=settings.cancelled_reservation_retention,
+    confirmed=settings.confirmation_retention,
+  )
+
+
+@injectable(lifetime="scoped")
+def cleanup_retention_use_case(
+  uow: IUnitOfWork, reservations: IReservationRepository, policy: RetentionPolicy, clock: IClock
+) -> CleanupRetentionUseCase:
+  return CleanupRetentionUseCase(uow, reservations, policy, clock)
 
 
 @injectable(lifetime="scoped")
@@ -239,6 +257,8 @@ def create_container(
       db_settings,
       *([database_engine, database_session_maker] if session_maker is None else [supplied_session_maker]),
       reservation_time_policy,
+      retention_policy,
+      cleanup_retention_use_case,
       session_manager,
       clock,
       unit_of_work,

@@ -125,6 +125,9 @@ class Reservations(IReservationRepository):
   def __init__(self, store: Store) -> None:
     self.store = store
 
+  async def purge_terminal(self, cutoffs, *, limit):
+    raise NotImplementedError("Retention metadata and cleanup are tested against PostgreSQL")
+
   async def find_by_id(self, id: UUID, *, for_update: bool = False) -> Reservation | None:
     self.store.check()
     return deepcopy(self.store.reservations.get(id))

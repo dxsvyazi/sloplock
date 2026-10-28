@@ -35,6 +35,21 @@ bootstrap; several service, adapter, and application files are still scaffolding
 - Confirm an active reservation before it expires.
 - Retrieve the confirmation result when one exists.
 - Return the existing result for repeated successful confirmation requests.
+  This guarantee lasts while the reservation and confirmation are retained;
+  after retention cleanup, lookups and confirmation retries return not found.
+
+### Historical retention
+
+- Keep terminal reservations and their confirmations for 30 days by default,
+  measured from the persisted UTC terminal transition time (`finalized_at`).
+- Configure retention separately for expired, cancelled, and confirmed states;
+  zero means keep that state's history indefinitely.
+- Delete eligible records in bounded transactions through a separate retention
+  worker. Delete confirmations with their associated reservations atomically.
+- Never purge active reservations or products, and never change stock during
+  retention cleanup. Overdue active reservations must first be expired normally.
+- Idempotency keys become reusable after their reservation is deleted. Operators
+  own historical exports and retention of externally collected logs.
 
 ## Inventory and transaction invariants
 

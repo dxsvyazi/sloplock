@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from datetime import datetime
 from uuid import UUID
 
 from stocklock.domain.entities.reservation import Reservation
@@ -20,6 +21,15 @@ class ReservationSnapshot:
 
 class IReservationRepository(ABC):
   """Transaction-scoped primitives; use cases coordinate related stock changes."""
+
+  @abstractmethod
+  async def purge_terminal(self, cutoffs: dict[ReservationStatus, datetime], *, limit: int) -> int:
+    """Lock and delete a bounded batch of terminal holds and their confirmations.
+
+    Skip locked reservations. Each status has an inclusive finalization cutoff;
+    omitted statuses are retained. Caller owns the transaction. Never alter stock.
+    """
+    ...
 
   @abstractmethod
   async def find_by_id(self, id: UUID, *, for_update: bool = False) -> Reservation | None: ...

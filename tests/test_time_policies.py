@@ -24,16 +24,16 @@ def isolated_time_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -
     monkeypatch.delenv(name, raising=False)
 
 
-def test_default_policy_has_fifteen_minute_holds_and_indefinite_retention() -> None:
+def test_default_policy_has_fifteen_minute_holds_and_thirty_day_retention() -> None:
   from stocklock.project.configs.time_policy import TimePolicySettings
 
   settings = TimePolicySettings()
   assert settings.reservation_lifetime == timedelta(minutes=15)
   assert settings.expiration_cleanup_interval == timedelta(minutes=1)
   assert settings.retention_cleanup_interval == timedelta(days=1)
-  assert settings.expired_reservation_retention is None
-  assert settings.cancelled_reservation_retention is None
-  assert settings.confirmation_retention is None
+  assert settings.expired_reservation_retention == timedelta(days=30)
+  assert settings.cancelled_reservation_retention == timedelta(days=30)
+  assert settings.confirmation_retention == timedelta(days=30)
 
 
 def test_environment_overrides_dotenv_and_all_durations_are_converted(

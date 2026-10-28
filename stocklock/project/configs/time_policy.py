@@ -1,4 +1,4 @@
-"""Environment time policies; launch the expiration worker separately."""
+"""Environment time policies; launch expiration and retention workers separately."""
 
 from datetime import timedelta
 from typing import Annotated
@@ -7,6 +7,7 @@ from pydantic import Field, field_validator
 from pydantic_settings import SettingsConfigDict
 
 from stocklock.project.configs import CustomBaseSettings
+from stocklock.shared.constraints import MAX_PAGE_SIZE
 
 type PositiveSeconds = Annotated[int, Field(gt=0, le=2**31 - 1)]
 type RetentionSeconds = Annotated[int, Field(ge=0, le=2**31 - 1)]
@@ -20,9 +21,12 @@ class TimePolicySettings(CustomBaseSettings):
   RESERVATION_LIFETIME_SECONDS: PositiveSeconds = 900
   EXPIRATION_CLEANUP_INTERVAL_SECONDS: PositiveSeconds = 60
   RETENTION_CLEANUP_INTERVAL_SECONDS: PositiveSeconds = 86400
-  EXPIRED_RESERVATION_RETENTION_SECONDS: RetentionSeconds = 0
-  CANCELLED_RESERVATION_RETENTION_SECONDS: RetentionSeconds = 0
-  CONFIRMATION_RETENTION_SECONDS: RetentionSeconds = 0
+  EXPIRED_RESERVATION_RETENTION_SECONDS: RetentionSeconds = 2592000
+  CANCELLED_RESERVATION_RETENTION_SECONDS: RetentionSeconds = 2592000
+  CONFIRMATION_RETENTION_SECONDS: RetentionSeconds = 2592000
+  RETENTION_BATCH_SIZE: Annotated[int, Field(gt=0, le=MAX_PAGE_SIZE)] = 100
+  RETENTION_MAX_BATCHES: PositiveSeconds = 100
+  RETENTION_OPERATION_TIMEOUT_SECONDS: PositiveSeconds = 30
 
   @field_validator(
     "RESERVATION_LIFETIME_SECONDS",
@@ -31,6 +35,9 @@ class TimePolicySettings(CustomBaseSettings):
     "EXPIRED_RESERVATION_RETENTION_SECONDS",
     "CANCELLED_RESERVATION_RETENTION_SECONDS",
     "CONFIRMATION_RETENTION_SECONDS",
+    "RETENTION_BATCH_SIZE",
+    "RETENTION_MAX_BATCHES",
+    "RETENTION_OPERATION_TIMEOUT_SECONDS",
     mode="before",
   )
   @classmethod
@@ -54,6 +61,10 @@ class TimePolicySettings(CustomBaseSettings):
   @property
   def retention_cleanup_interval(self) -> timedelta:
     return timedelta(seconds=self.RETENTION_CLEANUP_INTERVAL_SECONDS)
+
+  @property
+  def retention_operation_timeout(self) -> timedelta:
+    return timedelta(seconds=self.RETENTION_OPERATION_TIMEOUT_SECONDS)
 
   @property
   def expired_reservation_retention(self) -> timedelta | None:

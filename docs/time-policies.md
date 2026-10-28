@@ -5,7 +5,7 @@ load when `create_persistence_container` is called, so importing modules does no
 capture environment values. Explicit constructor values override environment
 variables, which override `.env` values, which override defaults.
 
-All values are **whole seconds**, using ASCII digits. Lifetime and sweep intervals
+All durations are **whole seconds**, using ASCII digits. Lifetime and sweep intervals
 must be in `1..2147483647`; retention values allow `0..2147483647`. Negative,
 fractional, boolean, empty, and out-of-range values fail configuration validation.
 The upper bound keeps durations representable and limits them to about 68 years.
@@ -15,10 +15,13 @@ Retention `0` means keep indefinitely; the corresponding Python property is `Non
 | --- | --- | --- | --- |
 | `RESERVATION_LIFETIME_SECONDS` | `900` | `reservation_lifetime: timedelta` | Lifetime of new reservations |
 | `EXPIRATION_CLEANUP_INTERVAL_SECONDS` | `60` | `expiration_cleanup_interval: timedelta` | Expiration worker sweep interval |
-| `RETENTION_CLEANUP_INTERVAL_SECONDS` | `86400` | `retention_cleanup_interval: timedelta` | Future retention sweep interval |
-| `EXPIRED_RESERVATION_RETENTION_SECONDS` | `0` | `expired_reservation_retention: timedelta \| None` | Future retention after expiration |
-| `CANCELLED_RESERVATION_RETENTION_SECONDS` | `0` | `cancelled_reservation_retention: timedelta \| None` | Future retention after cancellation |
-| `CONFIRMATION_RETENTION_SECONDS` | `0` | `confirmation_retention: timedelta \| None` | Future retention of confirmations and associated confirmed reservations |
+| `RETENTION_CLEANUP_INTERVAL_SECONDS` | `86400` | `retention_cleanup_interval: timedelta` | Retention worker sweep interval |
+| `EXPIRED_RESERVATION_RETENTION_SECONDS` | `2592000` | `expired_reservation_retention: timedelta \| None` | Retention after finalization as expired |
+| `CANCELLED_RESERVATION_RETENTION_SECONDS` | `2592000` | `cancelled_reservation_retention: timedelta \| None` | Retention after finalization as cancelled |
+| `CONFIRMATION_RETENTION_SECONDS` | `2592000` | `confirmation_retention: timedelta \| None` | Retention of confirmations and associated confirmed reservations after finalization |
+| `RETENTION_BATCH_SIZE` | `100` | `RETENTION_BATCH_SIZE: int` | Reservations per cleanup transaction, 1–100 |
+| `RETENTION_MAX_BATCHES` | `100` | `RETENTION_MAX_BATCHES: int` | Maximum cleanup transactions per sweep |
+| `RETENTION_OPERATION_TIMEOUT_SECONDS` | `30` | `retention_operation_timeout: timedelta` | Per-batch timeout |
 
 For example, a two-minute hold:
 
@@ -70,12 +73,39 @@ back and retry individually; failed holds are logged and revisited while later
 candidates continue. SIGTERM/SIGINT stop processing between batches (or between
 individual fallback attempts) and close dependencies.
 
-Retention settings remain configuration for future workers and do not delete records.
-The current confirmation retry promise is unchanged, including when finite
-retention is configured. A future worker needs a separate deletion contract,
-terminal transition timestamps, and an explicit decision about the confirmation
-and reservation idempotency windows. Active holds must never be purged, and
-confirmation records must be handled with their associated confirmed reservations.
+Run `python -m stocklock.infrastructure.workers.retention` separately from the
+API. Compose starts it after migrations. It sweeps immediately on startup and
+then at `RETENTION_CLEANUP_INTERVAL_SECONDS` intervals. Every batch selects only
+terminal rows whose UTC `finalized_at` is at or before that status's retention
+cutoff, locks them with `FOR UPDATE SKIP LOCKED`, and deletes their confirmations
+and reservations in one application-owned transaction. Cleanup never changes
+stock, removes products, or removes active holds, even overdue ones. Normal
+expiration must first release those holds and record their terminal transition.
+
+`finalized_at` is persistence metadata written by the database during each
+successful terminal transition, including bulk expiration. Repeated or failed
+transitions never reset it. Migration `0003_retention` sets it to migration time
+for existing terminal records, granting them a full retention window. Existing
+active records keep a null timestamp. Apply the migration before starting the
+updated API and workers; older processes cannot write the required metadata.
+
+The worker bounds each sweep by `RETENTION_MAX_BATCHES` and each transaction by
+`RETENTION_BATCH_SIZE` (1–100). Batch count and timeout must be positive whole
+integers no greater than 2147483647. Failed or timed-out batches roll back; the
+next sweep retries them. Locked records are skipped and revisited later. Sweep
+intervals and backlogs can extend actual retention beyond the configured minimum.
+When all three retention durations are zero, the CLI exits successfully without
+connecting to PostgreSQL; Compose uses restart-on-failure to leave it stopped.
+SIGTERM/SIGINT prevent new batches and let the current operation finish or time
+out. Compose allows 35 seconds for shutdown; increase this when raising the batch
+timeout to allow rollback and resource closure.
+
+Confirmation retrieval and idempotent retries remain available while records
+exist. After cleanup, old reservation lookups and confirmation requests return
+HTTP 404, and deleted reservation keys may be reused for new holds. Confirmations
+and their confirmed reservations share one retention window and are deleted
+together. Operators can export or replicate history before deletion and control
+external log retention. Increasing retention does not recover deleted history.
 
 No configurable grace period is introduced: confirmation at or after the deadline
 would conflict with the service's expiration invariant. See `.env.example` for all
