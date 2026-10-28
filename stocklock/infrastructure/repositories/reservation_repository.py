@@ -93,6 +93,7 @@ class ReservationRepository(SessionRepository, IReservationRepository):
       .with_for_update(skip_locked=True)
       .cte("due_reservations")
     )
+
     rows = await self.session.scalars(
       update(ReservationORM)
       .where(
@@ -104,6 +105,7 @@ class ReservationRepository(SessionRepository, IReservationRepository):
       .returning(ReservationORM)
       .execution_options(synchronize_session=False, populate_existing=True)
     )
+
     return [orm_to_domain(row) for row in rows]
 
   async def save_transition(

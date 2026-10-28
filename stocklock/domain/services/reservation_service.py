@@ -50,8 +50,10 @@ class ReservationService:
 
   async def expire_due(self, reservation_ids: tuple[UUID, ...]) -> "list[Reservation]":
     validate_page(len(reservation_ids))
+
     for reservation_id in reservation_ids:
       validate_id(reservation_id)
+
     return await self.reservations.expire_due(reservation_ids)
 
   async def find_retry(

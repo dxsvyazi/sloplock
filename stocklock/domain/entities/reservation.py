@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Self
+from typing import Any, Final, Self
 from uuid import UUID
 
 from stocklock.domain.entities.base import BaseEntity
@@ -17,6 +17,10 @@ from stocklock.shared.exceptions import (
 from stocklock.shared.utils import utc_now
 from stocklock.shared.utils.timestamps import as_utc
 
+_ALLOWED_TRANSITION: Final[frozenset] = frozenset(
+  (ReservationStatus.confirmed, ReservationStatus.expired, ReservationStatus.cancelled)
+)
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Reservation(BaseEntity):
@@ -32,7 +36,6 @@ class Reservation(BaseEntity):
   def __post_init__(self) -> None:
     validate_id(self.id)
     validate_id(self.product_id)
-
     require_type(self.key, IdempotencyKey)
     require_type(self.quantity, ReservationQuantity)
     self.validate_status(self.status)
@@ -63,7 +66,7 @@ class Reservation(BaseEntity):
 
   @staticmethod
   def validate_target(target: ReservationStatus) -> None:
-    if target not in (ReservationStatus.confirmed, ReservationStatus.expired, ReservationStatus.cancelled):
+    if target not in _ALLOWED_TRANSITION:
       raise InvalidTransitionTarget
 
   def ensure_new(self) -> None:
@@ -84,10 +87,10 @@ class Reservation(BaseEntity):
   def can_transition(self, target: ReservationStatus, now: datetime) -> bool:
     self.validate_target(target)
 
-    now = as_utc(now)
-
     if self.status is not ReservationStatus.active:
       return False
+
+    now = as_utc(now)
 
     if target is ReservationStatus.confirmed:
       return now < self.expires_at

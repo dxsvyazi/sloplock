@@ -38,6 +38,7 @@ class Product(BaseEntity):
     require_type(self.name, ProductName)
     require_type(self.sku, SKU)
     require_type(self.stock_quantity, StockQuantity)
+
     self._set("created_at", as_utc(self.created_at))
 
     if self.updated_at is not None:
@@ -50,6 +51,7 @@ class Product(BaseEntity):
   @staticmethod
   def validate_return_capacity(available_quantity: StockQuantity, held_quantity: int) -> None:
     require_type(available_quantity, StockQuantity)
+
     # Aggregated active holds can exceed the per-row integer range.
     if type(held_quantity) is not int or held_quantity < 0:
       raise ValidationException("Held quantity must be a nonnegative integer")
@@ -71,6 +73,7 @@ class Product(BaseEntity):
       require_type(details["sku"], SKU)
 
     updated = False
+
     for name, value in details.items():
       if getattr(self, name) != value:
         self._set(name, value)
@@ -85,6 +88,7 @@ class Product(BaseEntity):
 
   def adjust_stock(self, delta: StockDelta) -> None:
     require_type(delta, StockDelta)
+
     quantity = self.stock_quantity.value + delta.value
 
     if quantity < 0:

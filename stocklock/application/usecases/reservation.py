@@ -40,8 +40,8 @@ class ReserveProductUseCase:
         return existing
 
       await self.products.hold_stock(command.product_id, quantity)
-      created_at = await self.reservations.current_time()
 
+      created_at = await self.reservations.current_time()
       reservation = Reservation.create(
         product_id=command.product_id,
         quantity=command.quantity,
