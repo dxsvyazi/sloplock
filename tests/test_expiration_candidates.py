@@ -5,6 +5,7 @@ from stocklock.application.commands.common import PageCommand
 from stocklock.domain.entities.reservation import Reservation
 from stocklock.domain.services.reservation_service import ReservationService
 from stocklock.domain.value_objects.reservation import IdempotencyKey, ReservationQuantity
+from stocklock.infrastructure.clock import PostgresClock
 from stocklock.infrastructure.repositories.reservation_repository import ReservationRepository
 from stocklock.shared.enums import ReservationStatus
 from tests.entity_updates import transition
@@ -46,7 +47,7 @@ async def test_postgres_due_candidates_filter_status_deadline_and_cursor(databas
   products = ProductRepository(database.manager)
   async with database.uow.begin():
     product = await products.create(Product.create(name="Item", sku="item", stock_quantity=0))
-    now = await reservations.current_time()
+    now = await PostgresClock(database.manager).now()
     ids = []
     for number, offset in ((1, -1), (2, -1), (3, 3600)):
       item = await reservations.create(
@@ -60,7 +61,7 @@ async def test_postgres_due_candidates_filter_status_deadline_and_cursor(databas
         )
       )
       ids.append(item.id)
-    await transition(reservations, ids[1], ReservationStatus.cancelled)
+    await transition(reservations, ids[1], ReservationStatus.cancelled, clock=PostgresClock(database.manager))
   flow = ListDueReservationsUseCase(database.uow, ReservationService(reservations))
   assert await flow.execute(PageCommand(limit=1)) == [ids[0]]
   assert await flow.execute(PageCommand(start_id=ids[0])) == []

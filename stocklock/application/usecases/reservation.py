@@ -9,6 +9,7 @@ from stocklock.application.commands.reservation import (
   ListReservationsCommand,
 )
 from stocklock.application.policies.reservation import ReservationTimePolicy
+from stocklock.application.ports.clock import IClock
 from stocklock.application.ports.uow import IUnitOfWork
 from stocklock.domain.entities.reservation import Reservation
 from stocklock.domain.errors import ReservationUnavailable
@@ -24,6 +25,7 @@ class ReserveProductUseCase:
   products: ProductService
   reservations: ReservationService
   time_policy: ReservationTimePolicy
+  clock: IClock
 
   async def execute(self, command: CreateReservationCommand) -> Reservation:
     """Start the configured lifetime after locking; retries retain the original hold."""
@@ -41,7 +43,7 @@ class ReserveProductUseCase:
 
       await self.products.hold_stock(command.product_id, quantity)
 
-      created_at = await self.reservations.current_time()
+      created_at = await self.clock.now()
       reservation = Reservation.create(
         product_id=command.product_id,
         quantity=command.quantity,
@@ -118,6 +120,7 @@ class ExpireReservationUseCase:
   uow: IUnitOfWork
   products: ProductService
   reservations: ReservationService
+  clock: IClock
 
   async def execute(self, command: ExpireReservationCommand) -> Reservation:
     async with self.uow.begin():
@@ -125,7 +128,7 @@ class ExpireReservationUseCase:
 
       original = ReservationSnapshot.capture(reservation)
 
-      if not reservation.expire(await self.reservations.current_time()):
+      if not reservation.expire(await self.clock.now()):
         raise ReservationUnavailable.not_eligible_for_expire()
 
       reservation = await self.reservations.save_transition(reservation, original=original)
@@ -145,6 +148,7 @@ class TryExpireReservationUseCase:
   uow: IUnitOfWork
   products: ProductService
   reservations: ReservationService
+  clock: IClock
 
   async def execute(self, command: ExpireReservationCommand) -> Reservation | None:
     async with self.uow.begin():
@@ -155,7 +159,7 @@ class TryExpireReservationUseCase:
 
       original = ReservationSnapshot.capture(reservation)
 
-      if not reservation.expire(await self.reservations.current_time()):
+      if not reservation.expire(await self.clock.now()):
         return None
 
       reservation = await self.reservations.save_transition(reservation, original=original)

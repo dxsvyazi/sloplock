@@ -1,6 +1,5 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from datetime import datetime
 from uuid import UUID
 
 from stocklock.domain.entities.reservation import Reservation
@@ -21,11 +20,6 @@ class ReservationSnapshot:
 
 class IReservationRepository(ABC):
   """Transaction-scoped primitives; use cases coordinate related stock changes."""
-
-  @abstractmethod
-  async def current_time(self) -> datetime:
-    """Return authoritative UTC wall time, including time elapsed waiting for locks."""
-    ...
 
   @abstractmethod
   async def find_by_id(self, id: UUID, *, for_update: bool = False) -> Reservation | None: ...

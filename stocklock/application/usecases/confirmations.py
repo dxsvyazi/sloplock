@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 from stocklock.application.commands.confirmation import ConfirmReservationCommand, GetConfirmationCommand
+from stocklock.application.ports.clock import IClock
 from stocklock.application.ports.uow import IUnitOfWork
 from stocklock.domain.entities.confirmation import Confirmation
 from stocklock.domain.errors import ConfirmationNotFound, ReservationUnavailable
@@ -15,6 +16,7 @@ class ConfirmReservationUseCase:
   uow: IUnitOfWork
   reservations: ReservationService
   confirmations: ConfirmationService
+  clock: IClock
 
   async def execute(self, command: ConfirmReservationCommand) -> Confirmation:
     async with self.uow.begin():
@@ -25,7 +27,7 @@ class ConfirmReservationUseCase:
 
       original = ReservationSnapshot.capture(reservation)
 
-      if not reservation.confirm(await self.reservations.current_time()):
+      if not reservation.confirm(await self.clock.now()):
         raise ReservationUnavailable("Reservation is no longer active and unexpired")
       reservation = await self.reservations.save_transition(reservation, original=original)
 

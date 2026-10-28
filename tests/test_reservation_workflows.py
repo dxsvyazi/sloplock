@@ -8,6 +8,7 @@ from sqlalchemy.exc import DBAPIError
 
 from stocklock.domain.entities.product import Product
 from stocklock.domain.value_objects.product import StockDelta
+from stocklock.infrastructure.clock import PostgresClock
 from stocklock.infrastructure.models.product import ProductORM
 from stocklock.infrastructure.models.reservation import ReservationORM
 from stocklock.infrastructure.repositories.confirmation_repository import ConfirmationRepository
@@ -23,7 +24,12 @@ def setup_repositories(database):
   products = ProductRepository(database.manager)
   reservations = ReservationRepository(database.manager)
   confirmations = ConfirmationRepository(database.manager)
-  return products, reservations, confirmations, ReservationDriver(database.uow, products, reservations, confirmations)
+  return (
+    products,
+    reservations,
+    confirmations,
+    ReservationDriver(database.uow, products, reservations, confirmations, clock=PostgresClock(database.manager)),
+  )
 
 
 async def create_product(database, products, stock=10):
@@ -299,11 +305,14 @@ async def test_confirmation_waiting_on_lock_cannot_confirm_after_expiration(data
       from stocklock.domain.services.reservation_service import ReservationService
 
       usecase = ConfirmReservationUseCase(
-        ObservedUnitOfWork(), ReservationService(reservations), ConfirmationService(confirmations)
+        ObservedUnitOfWork(),
+        ReservationService(reservations),
+        ConfirmationService(confirmations),
+        PostgresClock(database.manager),
       )
       return await usecase.execute(ConfirmReservationCommand(reservation_id=item.id))
     async with ObservedUnitOfWork().begin():
-      return await transition(reservations, item.id, ReservationStatus.confirmed)
+      return await transition(reservations, item.id, ReservationStatus.confirmed, clock=PostgresClock(database.manager))
 
   task = asyncio.create_task(confirmer())
   try:
@@ -372,7 +381,10 @@ async def test_locked_reads_refresh_previously_loaded_orm_rows(database, kind):
       else:
         assert loaded.status is ReservationStatus.active
         assert (await reservations.find_by_id(item.id, for_update=True)).status is ReservationStatus.cancelled
-        assert await transition(reservations, item.id, ReservationStatus.confirmed) is None
+        assert (
+          await transition(reservations, item.id, ReservationStatus.confirmed, clock=PostgresClock(database.manager))
+          is None
+        )
   finally:
     task.cancel()
     await asyncio.gather(task, return_exceptions=True)

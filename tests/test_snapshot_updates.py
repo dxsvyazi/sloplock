@@ -13,6 +13,7 @@ from stocklock.domain.services.product_service import ProductService
 from stocklock.domain.services.reservation_service import ReservationService
 from stocklock.domain.value_objects.product import ProductName, StockDelta, StockQuantity
 from stocklock.domain.value_objects.reservation import IdempotencyKey, ReservationQuantity
+from stocklock.infrastructure.clock import PostgresClock
 from stocklock.infrastructure.repositories.product_repository import ProductRepository
 from stocklock.infrastructure.repositories.reservation_repository import ReservationRepository
 from stocklock.shared.enums import ReservationStatus
@@ -203,7 +204,7 @@ async def test_postgresql_terminal_save_rechecks_deadline_after_domain_mutation(
   service = ReservationService(repository)
   async with database.uow.begin():
     product = await products.create(Product.create(name="Widget", sku="W1", stock_quantity=5))
-    now = await service.current_time()
+    now = await PostgresClock(database.manager).now()
     item = await repository.create(
       Reservation(
         product_id=product.id,
@@ -215,7 +216,7 @@ async def test_postgresql_terminal_save_rechecks_deadline_after_domain_mutation(
     )
     item = await service.require(item.id, for_update=True)
     original = reservation_snapshot(item)
-    item.confirm(await service.current_time())
+    item.confirm(await PostgresClock(database.manager).now())
     # Deterministically move the persisted deadline past the decision instant.
     await database.manager.get_session().execute(
       text("UPDATE reservations SET expires_at=clock_timestamp()-interval '1 minute' WHERE id=:id"), {"id": item.id}

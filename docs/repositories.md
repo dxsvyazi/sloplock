@@ -28,15 +28,15 @@ into handlers/use cases; do not resolve services inside business logic.
   using a stale, unlocked entity. `adjust_stock` explicitly uses a database
   timestamp; `_update` does not inject a competing timestamp.
 - Reservations: `create`, `find_by_id`, `find_by_key`, `find_many`,
-  `current_time`, `save_transition`, `find_due_ids`, `expire_due`. Lists optionally filter by product and status.
+  `save_transition`, `find_due_ids`, `expire_due`. Lists optionally filter by product and status.
   `save_transition` accepts an already mutated, locked entity and its previous
   status. It accepts only confirmed/expired/cancelled targets, and succeeds
   only from active. Confirmation requires `now < expires_at`; expiration
   requires `now >= expires_at`. Cancellation releases any stored active hold,
   including an overdue one. Ineligible or missing transitions return `None`.
   The use case fetches with `for_update=True`, snapshots the status, reads
-  authoritative time after locking, and invokes the entity transition. The
-  service compares statuses and passes the entity and previous status to the
+  authoritative time through its injected `IClock` after locking, and invokes
+  the entity transition. The service compares statuses and passes the entity and previous status to the
   adapter. Conditional write guards remain in the adapter; it does not mutate
   domain entities. `expire_due` locks requested active, overdue holds with
   `FOR UPDATE SKIP LOCKED`, bulk-transitions them to expired, and returns only

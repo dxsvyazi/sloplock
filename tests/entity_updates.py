@@ -2,6 +2,7 @@
 
 from uuid import UUID
 
+from stocklock.application.ports.clock import IClock
 from stocklock.domain.entities.product import Product
 from stocklock.domain.entities.reservation import Reservation
 from stocklock.domain.ports.repositories.product_repository import (
@@ -43,7 +44,7 @@ async def set_stock(products: IProductRepository | ProductService, id: UUID, qua
 
 
 async def transition(
-  reservations: IReservationRepository | ReservationService, id: UUID, target: ReservationStatus
+  reservations: IReservationRepository | ReservationService, id: UUID, target: ReservationStatus, *, clock: IClock
 ) -> Reservation | None:
   service = reservations if isinstance(reservations, ReservationService) else ReservationService(reservations)
   reservation = await service.get(id, for_update=True)
@@ -54,9 +55,9 @@ async def transition(
   if target is ReservationStatus.cancelled:
     changed = reservation.cancel()
   elif target is ReservationStatus.confirmed:
-    changed = reservation.confirm(await service.current_time())
+    changed = reservation.confirm(await clock.now())
   else:
-    changed = reservation.expire(await service.current_time())
+    changed = reservation.expire(await clock.now())
   if not changed:
     return None
   return await service.save_transition(reservation, original=original)

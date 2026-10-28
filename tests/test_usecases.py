@@ -28,7 +28,7 @@ from stocklock.domain.services.reservation_service import ReservationService
 from stocklock.domain.value_objects.product import StockQuantity
 from stocklock.shared.enums import ReservationStatus
 from stocklock.shared.exceptions import ValidationException
-from tests.service_doubles import Confirmations, PersistenceTestFailure, Products, Reservations, Store
+from tests.service_doubles import Clock, Confirmations, PersistenceTestFailure, Products, Reservations, Store
 
 
 @pytest.fixture
@@ -49,6 +49,13 @@ def flows():
     kwargs = {d: services[d] for d in dependencies}
     if name == "ReserveProductUseCase":
       kwargs["time_policy"] = ReservationTimePolicy(lifetime=timedelta(minutes=5))
+    if name in (
+      "ReserveProductUseCase",
+      "ConfirmReservationUseCase",
+      "ExpireReservationUseCase",
+      "TryExpireReservationUseCase",
+    ):
+      kwargs["clock"] = Clock(store)
     return getattr(module, name)(uow=store, **kwargs)
 
   return store, build
@@ -140,7 +147,7 @@ async def test_cancel_releases_stock_without_reading_clock(flows, monkeypatch, s
   async def unavailable_clock(self):
     raise AssertionError("Cancellation must not query the clock")
 
-  monkeypatch.setattr(Reservations, "current_time", unavailable_clock)
+  monkeypatch.setattr(Clock, "now", unavailable_clock)
   result = await build("CancelReservationUseCase", "products", "reservations").execute(
     CancelReservationCommand(reservation_id=item.id)
   )

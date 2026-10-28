@@ -11,6 +11,7 @@ from stocklock.domain.entities.product import Product
 from stocklock.domain.entities.reservation import Reservation
 from stocklock.domain.value_objects.product import StockDelta
 from stocklock.domain.value_objects.reservation import IdempotencyKey, ReservationQuantity
+from stocklock.infrastructure.clock import PostgresClock
 from stocklock.infrastructure.exceptions import NoActiveSession
 from stocklock.infrastructure.repositories.product_repository import ProductRepository
 from stocklock.shared.enums import ReservationStatus
@@ -82,20 +83,34 @@ async def test_reservation_filters_and_irreversible_transitions(database):
     assert await reservations.find_by_id(uuid4()) is None
     assert await reservations.find_by_key(first.id, active.key) == active
     assert await reservations.find_by_key(second.id, active.key) is None
-    assert await transition(reservations, expired.id, ReservationStatus.confirmed) is None
-    assert await transition(reservations, active.id, ReservationStatus.expired) is None
-    assert (await transition(reservations, expired.id, ReservationStatus.expired)).status == ReservationStatus.expired
     assert (
-      await transition(reservations, active.id, ReservationStatus.confirmed)
+      await transition(reservations, expired.id, ReservationStatus.confirmed, clock=PostgresClock(database.manager))
+      is None
+    )
+    assert (
+      await transition(reservations, active.id, ReservationStatus.expired, clock=PostgresClock(database.manager))
+      is None
+    )
+    assert (
+      await transition(reservations, expired.id, ReservationStatus.expired, clock=PostgresClock(database.manager))
+    ).status == ReservationStatus.expired
+    assert (
+      await transition(reservations, active.id, ReservationStatus.confirmed, clock=PostgresClock(database.manager))
     ).status == ReservationStatus.confirmed
-    assert await transition(reservations, active.id, ReservationStatus.cancelled) is None
-    assert await transition(reservations, uuid4(), ReservationStatus.cancelled) is None
+    assert (
+      await transition(reservations, active.id, ReservationStatus.cancelled, clock=PostgresClock(database.manager))
+      is None
+    )
+    assert (
+      await transition(reservations, uuid4(), ReservationStatus.cancelled, clock=PostgresClock(database.manager))
+      is None
+    )
     result = await confirmations.create(Confirmation(reservation_id=active.id))
     assert await confirmations.create(Confirmation(reservation_id=active.id)) == result
     assert await confirmations.find_by_reservation_id(active.id) == result
     assert await confirmations.find_by_reservation_id(other.id) is None
     with pytest.raises(ValidationException):
-      await transition(reservations, other.id, ReservationStatus.active)
+      await transition(reservations, other.id, ReservationStatus.active, clock=PostgresClock(database.manager))
     with pytest.raises(ValidationException):
       await confirmations.create(Confirmation(reservation_id=other.id))
     assert [r.id for r in await reservations.find_many(product_id=first.id, status=ReservationStatus.expired)] == [
@@ -137,7 +152,7 @@ async def test_database_constraints_reject_invalid_writes(database, statement):
   async with database.uow.begin():
     await products.create(product)
     await reservations.create(item)
-    await transition(reservations, item.id, ReservationStatus.confirmed)
+    await transition(reservations, item.id, ReservationStatus.confirmed, clock=PostgresClock(database.manager))
     await confirmations.create(Confirmation(reservation_id=item.id))
   with pytest.raises(IntegrityError):
     async with database.uow.begin():

@@ -191,11 +191,12 @@ async def test_domain_errors(api, error, status):
   ],
 )
 async def test_failed_requests_use_real_workflows_and_central_error_handlers(api, action, scenario, status, detail):
+  from stocklock.application.ports.clock import IClock
   from stocklock.application.ports.uow import IUnitOfWork
   from stocklock.domain.ports.repositories.confirmation_repository import IConfirmationRepository
   from stocklock.domain.ports.repositories.product_repository import IProductRepository
   from stocklock.domain.ports.repositories.reservation_repository import IReservationRepository
-  from tests.service_doubles import Confirmations, Products, Reservations, Store
+  from tests.service_doubles import Clock, Confirmations, Products, Reservations, Store
 
   app, container = api
   store = Store(now=RESERVATION.created_at)
@@ -210,6 +211,7 @@ async def test_failed_requests_use_real_workflows_and_central_error_handlers(api
   with container.override(
     {
       IUnitOfWork: store,
+      IClock: Clock(store),
       IProductRepository: Products(store),
       IReservationRepository: Reservations(store),
       IConfirmationRepository: Confirmations(store),

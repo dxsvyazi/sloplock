@@ -45,6 +45,14 @@ or insert rolls back the stock hold. Direct callers construct a validated `Reser
 expiration timestamps, then pass it to `ReservationService.create(reservation)`;
 those callers own lifetime policy and must hold stock in the same transaction.
 
+Time-dependent use cases receive `IClock` from `application/ports/clock.py`.
+The scoped `PostgresClock` adapter uses the same `SessionManager` as repositories
+and the unit of work, and requires an active transaction. Its `now()` returns
+timezone-aware UTC wall time, including time spent waiting for locks. Creation,
+confirmation, and individual expiration read the clock after locking; tests can
+inject a controllable clock. Repository SQL still rechecks deadlines when saving
+transitions and selecting or expiring due reservations.
+
 Changing settings affects new containers and new holds. Existing deadlines are
 persisted and never recomputed. Matching idempotent retries return the original
 reservation, including its original deadline and terminal status, without holding

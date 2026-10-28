@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from datetime import datetime
 from uuid import UUID
 
 from stocklock.domain.entities.reservation import Reservation
@@ -69,9 +68,6 @@ class ReservationService:
       existing.ensure_retry(quantity)
 
     return existing
-
-  async def current_time(self) -> datetime:
-    return await self.reservations.current_time()
 
   async def create(self, reservation: Reservation) -> Reservation:
     """Persist a validated hold; the caller owns stock and transaction coordination."""

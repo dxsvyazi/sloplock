@@ -10,6 +10,7 @@ from stocklock.application.commands.reservation import (
   ExpireReservationCommand,
 )
 from stocklock.application.policies.reservation import ReservationTimePolicy
+from stocklock.application.ports.clock import IClock
 from stocklock.application.ports.uow import IUnitOfWork
 from stocklock.application.usecases.confirmations import ConfirmReservationUseCase
 from stocklock.application.usecases.reservation import (
@@ -35,16 +36,17 @@ class ReservationDriver:
     reservations: IReservationRepository,
     confirmations: IConfirmationRepository,
     *,
+    clock: IClock,
     time_policy: ReservationTimePolicy | None = None,
   ) -> None:
     product_service = ProductService(products)
     reservation_service = ReservationService(reservations)
     confirmation_service = ConfirmationService(confirmations)
     policy = time_policy if time_policy is not None else ReservationTimePolicy(lifetime=timedelta(minutes=5))
-    self.reserve_flow = ReserveProductUseCase(uow, product_service, reservation_service, policy)
-    self.confirm_flow = ConfirmReservationUseCase(uow, reservation_service, confirmation_service)
+    self.reserve_flow = ReserveProductUseCase(uow, product_service, reservation_service, policy, clock)
+    self.confirm_flow = ConfirmReservationUseCase(uow, reservation_service, confirmation_service, clock)
     self.cancel_flow = CancelReservationUseCase(uow, product_service, reservation_service)
-    self.expire_flow = ExpireReservationUseCase(uow, product_service, reservation_service)
+    self.expire_flow = ExpireReservationUseCase(uow, product_service, reservation_service, clock)
 
   async def reserve(self, product_id: UUID, quantity: int, key: str) -> Reservation:
     return await self.reserve_flow.execute(

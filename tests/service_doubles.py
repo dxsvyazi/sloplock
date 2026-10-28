@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from uuid import UUID
 
+from stocklock.application.ports.clock import IClock
 from stocklock.domain.entities.confirmation import Confirmation
 from stocklock.domain.entities.product import Product
 from stocklock.domain.entities.reservation import Reservation
@@ -111,13 +112,18 @@ class Products(IProductRepository):
     return deepcopy(product)
 
 
-class Reservations(IReservationRepository):
+class Clock(IClock):
   def __init__(self, store: Store) -> None:
     self.store = store
 
-  async def current_time(self) -> datetime:
+  async def now(self) -> datetime:
     self.store.check()
     return self.store.now
+
+
+class Reservations(IReservationRepository):
+  def __init__(self, store: Store) -> None:
+    self.store = store
 
   async def find_by_id(self, id: UUID, *, for_update: bool = False) -> Reservation | None:
     self.store.check()

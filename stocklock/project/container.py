@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from wireup import AsyncContainer, create_async_container, injectable
 
 from stocklock.application.policies.reservation import ReservationTimePolicy
+from stocklock.application.ports.clock import IClock
 from stocklock.application.ports.uow import IUnitOfWork
 from stocklock.application.usecases.confirmations import ConfirmReservationUseCase, GetConfirmationUseCase
 from stocklock.application.usecases.expiration import ExpireReservationsUseCase, ListDueReservationsUseCase
@@ -31,6 +32,7 @@ from stocklock.domain.ports.repositories.reservation_repository import IReservat
 from stocklock.domain.services.confirmation_service import ConfirmationService
 from stocklock.domain.services.product_service import ProductService
 from stocklock.domain.services.reservation_service import ReservationService
+from stocklock.infrastructure.clock import PostgresClock
 from stocklock.infrastructure.repositories.confirmation_repository import ConfirmationRepository
 from stocklock.infrastructure.repositories.product_repository import ProductRepository
 from stocklock.infrastructure.repositories.reservation_repository import ReservationRepository
@@ -58,6 +60,11 @@ def reservation_repository(manager: SessionManager) -> IReservationRepository:
 @injectable(lifetime="scoped")
 def confirmation_repository(manager: SessionManager) -> IConfirmationRepository:
   return ConfirmationRepository(manager)
+
+
+@injectable(lifetime="scoped")
+def clock(manager: SessionManager) -> IClock:
+  return PostgresClock(manager)
 
 
 @injectable(lifetime="scoped")
@@ -111,8 +118,9 @@ def reserve_product_use_case(
   products: ProductService,
   reservations: ReservationService,
   time_policy: ReservationTimePolicy,
+  clock: IClock,
 ) -> ReserveProductUseCase:
-  return ReserveProductUseCase(uow, products, reservations, time_policy)
+  return ReserveProductUseCase(uow, products, reservations, time_policy, clock)
 
 
 @injectable(lifetime="scoped")
@@ -153,23 +161,23 @@ def cancel_reservation_use_case(
 
 @injectable(lifetime="scoped")
 def expire_reservation_use_case(
-  uow: IUnitOfWork, products: ProductService, reservations: ReservationService
+  uow: IUnitOfWork, products: ProductService, reservations: ReservationService, clock: IClock
 ) -> ExpireReservationUseCase:
-  return ExpireReservationUseCase(uow, products, reservations)
+  return ExpireReservationUseCase(uow, products, reservations, clock)
 
 
 @injectable(lifetime="scoped")
 def try_expire_reservation_use_case(
-  uow: IUnitOfWork, products: ProductService, reservations: ReservationService
+  uow: IUnitOfWork, products: ProductService, reservations: ReservationService, clock: IClock
 ) -> TryExpireReservationUseCase:
-  return TryExpireReservationUseCase(uow, products, reservations)
+  return TryExpireReservationUseCase(uow, products, reservations, clock)
 
 
 @injectable(lifetime="scoped")
 def confirm_reservation_use_case(
-  uow: IUnitOfWork, reservations: ReservationService, confirmations: ConfirmationService
+  uow: IUnitOfWork, reservations: ReservationService, confirmations: ConfirmationService, clock: IClock
 ) -> ConfirmReservationUseCase:
-  return ConfirmReservationUseCase(uow, reservations, confirmations)
+  return ConfirmReservationUseCase(uow, reservations, confirmations, clock)
 
 
 @injectable(lifetime="scoped")
@@ -232,6 +240,7 @@ def create_container(
       *([database_engine, database_session_maker] if session_maker is None else [supplied_session_maker]),
       reservation_time_policy,
       session_manager,
+      clock,
       unit_of_work,
       product_repository,
       reservation_repository,

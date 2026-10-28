@@ -12,6 +12,7 @@ from stocklock.domain.errors import StockLimitExceeded
 from stocklock.domain.services.product_service import ProductService
 from stocklock.domain.services.reservation_service import ReservationService
 from stocklock.domain.value_objects.reservation import IdempotencyKey, ReservationQuantity
+from stocklock.infrastructure.clock import PostgresClock
 from stocklock.infrastructure.repositories.product_repository import ProductRepository
 from stocklock.infrastructure.repositories.reservation_repository import ReservationRepository
 from stocklock.infrastructure.session_manager import SessionManager
@@ -71,18 +72,18 @@ async def test_bulk_rechecks_status_and_deadline_and_ignores_missing_ids(databas
   repo = ReservationRepository(database.manager)
   async with database.uow.begin():
     for index, status in ((1, ReservationStatus.cancelled), (2, ReservationStatus.expired)):
-      await transition(repo, pairs[index][1].id, status)
+      await transition(repo, pairs[index][1].id, status, clock=PostgresClock(database.manager))
     # Insert future and confirmed holds via valid entity lifecycle operations.
     from sqlalchemy import update
     from stocklock.infrastructure.models.reservation import ReservationORM
 
-    now = await repo.current_time()
+    now = await PostgresClock(database.manager).now()
     await database.manager.get_session(raises=True).execute(
       update(ReservationORM)
       .where(ReservationORM.id.in_([pairs[3][1].id, pairs[4][1].id]))
       .values(expires_at=now + timedelta(hours=1))
     )
-    await transition(repo, pairs[4][1].id, ReservationStatus.confirmed)
+    await transition(repo, pairs[4][1].id, ReservationStatus.confirmed, clock=PostgresClock(database.manager))
   assert await flow(database).execute(command([r.id for _, r in pairs] + [uuid4()])) == [pairs[0][1].id]
   async with database.uow.begin():
     for index, (product, _) in enumerate(pairs):
@@ -151,6 +152,7 @@ async def test_bulk_coordinates_with_other_terminal_workflows(database, operatio
     ProductRepository(database.manager),
     ReservationRepository(database.manager),
     ConfirmationRepository(database.manager),
+    clock=PostgresClock(database.manager),
   )
   results = await asyncio.gather(
     flow(database).execute(command([reservation.id])),

@@ -89,7 +89,7 @@ All aware timestamps normalize to UTC; naive timestamps are rejected.
 | Service | Operations |
 | --- | --- |
 | `ProductService` | `create`, `require`, `list`, `save_details`, `active_held_quantity`, `save_stock`, `hold_stock`, `return_stock` |
-| `ReservationService` | `get`, `require`, `list`, `list_due_ids`, `find_retry`, `current_time`, `create`, `save_transition` |
+| `ReservationService` | `get`, `require`, `list`, `list_due_ids`, `find_retry`, `create`, `save_transition` |
 | `ConfirmationService` | `get`, `require`, `create` |
 
 Product value objects validate names, SKUs, and integer stock bounds. Stock correction sets an

@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from stocklock.domain.entities.product import Product
 from stocklock.domain.entities.reservation import Reservation
 from stocklock.domain.value_objects.reservation import IdempotencyKey, ReservationQuantity
+from stocklock.infrastructure.clock import PostgresClock
 from stocklock.infrastructure.repositories.product_repository import ProductRepository
 from stocklock.infrastructure.repositories.reservation_repository import ReservationRepository
 from stocklock.project.container import create_container
@@ -18,7 +19,7 @@ async def seed(database, count=3):
   products = ProductRepository(database.manager)
   reservations = ReservationRepository(database.manager)
   async with database.uow.begin():
-    now = await reservations.current_time()
+    now = await PostgresClock(database.manager).now()
     pairs = []
     for number in range(1, count + 1):
       product = await products.create(Product.create(name="Item", sku=str(number), stock_quantity=0))

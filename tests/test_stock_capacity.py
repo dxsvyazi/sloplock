@@ -10,6 +10,7 @@ from stocklock.domain.errors import StockLimitExceeded
 from stocklock.domain.services.product_service import ProductService
 from stocklock.domain.value_objects.product import StockDelta
 from stocklock.domain.value_objects.reservation import IdempotencyKey, ReservationQuantity
+from stocklock.infrastructure.clock import PostgresClock
 from stocklock.infrastructure.repositories.product_repository import ProductRepository
 from stocklock.infrastructure.repositories.reservation_repository import ReservationRepository
 from stocklock.shared.constraints import MAX_STOCK_QUANTITY
@@ -87,7 +88,7 @@ async def test_correction_counts_only_active_holds_for_its_product(database):
         )
       )
       if product.id == first.id:
-        await transition(reservations, hold.id, ReservationStatus.cancelled)
+        await transition(reservations, hold.id, ReservationStatus.cancelled, clock=PostgresClock(database.manager))
     assert (await set_stock(products, first.id, MAX_STOCK_QUANTITY)).stock_quantity.value == MAX_STOCK_QUANTITY
 
 

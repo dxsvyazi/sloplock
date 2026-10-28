@@ -1,5 +1,6 @@
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from stocklock.application.ports.clock import IClock
 from stocklock.application.ports.uow import IUnitOfWork
 from stocklock.application.usecases.confirmations import ConfirmReservationUseCase, GetConfirmationUseCase
 from stocklock.application.usecases.product import (
@@ -16,6 +17,7 @@ from stocklock.application.usecases.reservation import (
   ListProductReservationsUseCase,
   ListReservationsUseCase,
   ReserveProductUseCase,
+  TryExpireReservationUseCase,
 )
 from stocklock.domain.ports.repositories.confirmation_repository import IConfirmationRepository
 from stocklock.domain.ports.repositories.product_repository import IProductRepository
@@ -34,6 +36,8 @@ async def test_container_wires_services_and_individual_flows_to_one_transaction_
     async with container.enter_scope() as scope:
       manager = await scope.get(SessionManager)
       uow = await scope.get(IUnitOfWork)
+      clock = await scope.get(IClock)
+      assert clock.session_manager is manager
       services = {
         "products": await scope.get(ProductService),
         "reservations": await scope.get(ReservationService),
@@ -59,11 +63,19 @@ async def test_container_wires_services_and_individual_flows_to_one_transaction_
         ListProductReservationsUseCase,
         CancelReservationUseCase,
         ExpireReservationUseCase,
+        TryExpireReservationUseCase,
         ConfirmReservationUseCase,
         GetConfirmationUseCase,
       ):
         flow = await scope.get(cls)
         assert flow.uow is uow
+        if cls in (
+          ReserveProductUseCase,
+          ConfirmReservationUseCase,
+          ExpireReservationUseCase,
+          TryExpireReservationUseCase,
+        ):
+          assert flow.clock is clock
         for name, service in services.items():
           if hasattr(flow, name):
             assert getattr(flow, name) is service

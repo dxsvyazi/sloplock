@@ -16,13 +16,14 @@ from stocklock.domain.entities.product import Product
 from stocklock.domain.entities.reservation import Reservation
 from stocklock.domain.services.product_service import ProductService
 from stocklock.domain.services.reservation_service import ReservationService
+from stocklock.infrastructure.clock import PostgresClock
 from stocklock.infrastructure.repositories.product_repository import ProductRepository
 from stocklock.infrastructure.repositories.reservation_repository import ReservationRepository
 from stocklock.project.configs.time_policy import TimePolicySettings
 from stocklock.project.persistence import create_persistence_container
 from stocklock.shared.exceptions import ValidationException
 from tests.conftest import Database
-from tests.service_doubles import Products, Reservations, Store
+from tests.service_doubles import Clock, Products, Reservations, Store
 
 
 async def seed(store: Store) -> Product:
@@ -40,20 +41,21 @@ def flow(store: Store, *, seconds: int) -> ReserveProductUseCase:
     products=ProductService(Products(store)),
     reservations=ReservationService(Reservations(store)),
     time_policy=ReservationTimePolicy(lifetime=timedelta(seconds=seconds)),
+    clock=Clock(store),
   )
 
 
 async def test_request_uses_configured_lifetime_and_one_authoritative_creation_instant() -> None:
-  class AdvancingClock(Reservations):
-    async def current_time(self) -> datetime:
-      now = await super().current_time()
+  class AdvancingClock(Clock):
+    async def now(self) -> datetime:
+      now = await super().now()
       self.store.now += timedelta(seconds=1)
       return now
 
   store = Store(now=datetime(2026, 1, 1, tzinfo=timezone.utc))
   product = await seed(store)
   usecase = flow(store, seconds=90)
-  usecase.reservations = ReservationService(AdvancingClock(store))
+  usecase.clock = AdvancingClock(store)
   item = await usecase.execute(command(product.id))
   assert item.created_at == datetime(2026, 1, 1, tzinfo=timezone.utc)
   assert item.expires_at == datetime(2026, 1, 1, 0, 1, 30, tzinfo=timezone.utc)
@@ -139,6 +141,7 @@ async def test_postgresql_hold_gets_full_lifetime_after_waiting_for_product_lock
     products=ObservedProducts(ProductRepository(database.manager)),
     reservations=ReservationService(ReservationRepository(database.manager)),
     time_policy=ReservationTimePolicy(lifetime=timedelta(seconds=120)),
+    clock=PostgresClock(database.manager),
   )
 
   # An independent task owns its own transaction/session, never its parent's context.

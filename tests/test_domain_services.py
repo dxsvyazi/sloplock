@@ -19,7 +19,7 @@ from stocklock.domain.value_objects.reservation import IdempotencyKey, Reservati
 from stocklock.shared.enums import ReservationStatus
 from stocklock.shared.exceptions import ValidationException
 from tests.entity_updates import set_stock, transition, update_details
-from tests.service_doubles import Confirmations, Products, Reservations, Store
+from tests.service_doubles import Clock, Confirmations, Products, Reservations, Store
 
 
 @pytest.fixture
@@ -139,11 +139,13 @@ async def test_terminal_operations_are_irreversible_and_expiration_is_inclusive(
       expires_at=store.now + timedelta(seconds=1),
     )
   )
-  assert await transition(reservations, item.id, ReservationStatus.expired) is None
+  assert await transition(reservations, item.id, ReservationStatus.expired, clock=Clock(store)) is None
   store.now = item.expires_at
-  assert await transition(reservations, item.id, ReservationStatus.confirmed) is None
-  assert (await transition(reservations, item.id, ReservationStatus.expired)).status is ReservationStatus.expired
-  assert await transition(reservations, item.id, ReservationStatus.cancelled) is None
+  assert await transition(reservations, item.id, ReservationStatus.confirmed, clock=Clock(store)) is None
+  assert (
+    await transition(reservations, item.id, ReservationStatus.expired, clock=Clock(store))
+  ).status is ReservationStatus.expired
+  assert await transition(reservations, item.id, ReservationStatus.cancelled, clock=Clock(store)) is None
   with pytest.raises(NotFound):
     await reservations.require(uuid4())
 
@@ -162,7 +164,7 @@ async def test_confirmation_creation_requires_confirmed_reservation_and_preserve
   with pytest.raises(ReservationUnavailable):
     await confirmations.create(Confirmation.from_reservation(item))
   assert store.confirmations == {}
-  confirmed = await transition(reservations, item.id, ReservationStatus.confirmed)
+  confirmed = await transition(reservations, item.id, ReservationStatus.confirmed, clock=Clock(store))
   result = await confirmations.create(Confirmation.from_reservation(confirmed))
   assert await confirmations.create(Confirmation.from_reservation(confirmed)) == result
   assert await confirmations.require(item.id) == result

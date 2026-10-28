@@ -1,5 +1,3 @@
-from datetime import datetime
-from typing import cast
 from uuid import UUID
 
 from sqlalchemy import func, select, update
@@ -8,22 +6,14 @@ from stocklock.domain.entities.reservation import Reservation
 from stocklock.domain.ports.repositories.reservation_repository import IReservationRepository
 from stocklock.domain.validation import require_type
 from stocklock.domain.value_objects.reservation import IdempotencyKey
-from stocklock.infrastructure.exceptions import ServerTimeUnavailable
 from stocklock.infrastructure.mappers.reservation import domain_to_orm, orm_to_domain
 from stocklock.infrastructure.models.reservation import ReservationORM
 from stocklock.infrastructure.repositories.base import SessionRepository, paginate
 from stocklock.shared.constraints import DEFAULT_PAGE_SIZE
 from stocklock.shared.enums import ReservationStatus
-from stocklock.shared.utils.timestamps import as_utc
 
 
 class ReservationRepository(SessionRepository, IReservationRepository):
-  async def current_time(self) -> datetime:
-    if (time := cast(datetime | None, await self.session.scalar(select(func.clock_timestamp())))) is None:
-      raise ServerTimeUnavailable
-
-    return as_utc(time)
-
   async def find_by_id(self, id: UUID, *, for_update: bool = False) -> Reservation | None:
     stmt = select(ReservationORM).where(ReservationORM.id == id)
 
