@@ -1,13 +1,10 @@
-from typing import Any, Callable, ClassVar, Type, cast
+from typing import Any, Callable, Type, cast
 
 from sqlalchemy import MetaData, inspect
 from sqlalchemy.orm import DeclarativeBase
-from typing_extensions import Sentinel
 
 from stocklock.shared.descriptors import cached_classproperty
 from stocklock.shared.utils.dumps import Dumpable
-
-_unset: Any = Sentinel("_unset")
 
 metadata = MetaData(
   naming_convention={
@@ -34,8 +31,6 @@ def _create_dump[T: BaseORM](cls: Type[T]) -> Callable[[T], dict[str, Any]]:
 
 
 class BaseORM(DeclarativeBase, Dumpable):
-  id: ClassVar[Any]
-
   metadata = metadata
   dump_factory = _create_dump
 

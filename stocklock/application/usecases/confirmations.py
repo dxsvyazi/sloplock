@@ -29,6 +29,7 @@ class ConfirmReservationUseCase:
 
       if not reservation.confirm(await self.clock.now()):
         raise ReservationUnavailable("Reservation is no longer active and unexpired")
+
       reservation = await self.reservations.save_transition(reservation, original=original)
 
       if reservation is None:

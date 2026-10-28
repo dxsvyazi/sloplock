@@ -5,7 +5,6 @@ from sqlalchemy import func, select, update
 
 from stocklock.domain.entities.product import Product
 from stocklock.domain.ports.repositories.product_repository import IProductRepository, ProductDetailField
-from stocklock.domain.validation import require_type
 from stocklock.domain.value_objects.product import StockDelta
 from stocklock.infrastructure.exceptions import EntityUpdateConflict
 from stocklock.infrastructure.mappers.product import details_to_values, domain_to_orm, orm_to_domain
@@ -84,7 +83,6 @@ class ProductRepository(SessionRepository, IProductRepository):
     return result
 
   async def adjust_stock(self, id: UUID, delta: StockDelta) -> Product | None:
-    require_type(delta, StockDelta)
     change = delta.value
 
     return await self._update(

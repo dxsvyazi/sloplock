@@ -28,6 +28,7 @@ class RetentionWorker:
   def __post_init__(self) -> None:
     validate_page(self.batch_size)
     validate_quantity(self.max_batches, minimum=1)
+
     for duration in (self.interval, self.operation_timeout):
       if not isinstance(duration, timedelta) or duration <= timedelta(0):
         raise ValueError("Worker interval and operation timeout must be positive durations")
@@ -44,6 +45,7 @@ class RetentionWorker:
 
       if deleted:
         logger.info("Deleted %s terminal reservations and their associated confirmations", deleted)
+
       if deleted < self.batch_size:
         return
 
@@ -68,6 +70,7 @@ async def main() -> None:
 
   try:
     policy = await container.get(RetentionPolicy)
+
     if not policy.enabled:
       logger.info("Retention cleanup disabled; keeping all history indefinitely")
       return
@@ -77,6 +80,7 @@ async def main() -> None:
       registered_signals.append(signum)
 
     settings = await container.get(TimePolicySettings)
+
     await RetentionWorker(
       container,
       settings.retention_cleanup_interval,
@@ -87,6 +91,7 @@ async def main() -> None:
   finally:
     for signum in registered_signals:
       loop.remove_signal_handler(signum)
+
     await container.close()
 
 

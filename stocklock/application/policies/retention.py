@@ -22,8 +22,9 @@ class RetentionPolicy:
     return any(duration is not None for duration in (self.expired, self.cancelled, self.confirmed))
 
   def cutoffs(self, now: datetime) -> dict[ReservationStatus, datetime]:
+    result: dict[ReservationStatus, datetime] = {}
     now = as_utc(now)
-    result = {}
+
     for status, duration in (
       (ReservationStatus.expired, self.expired),
       (ReservationStatus.cancelled, self.cancelled),
@@ -34,4 +35,5 @@ class RetentionPolicy:
           result[status] = now - duration
         except OverflowError:
           result[status] = datetime.min.replace(tzinfo=timezone.utc)
+
     return result

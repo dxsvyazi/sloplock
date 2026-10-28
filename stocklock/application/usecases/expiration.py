@@ -29,5 +29,7 @@ class ExpireReservationsUseCase:
     """Expire a bounded page and restore only its transitioned holds atomically."""
     async with self.uow.begin():
       expired = await self.reservations.expire_due(command.reservation_ids)
+
       await self.products.return_stock_many(expired)
+
       return [reservation.id for reservation in expired]

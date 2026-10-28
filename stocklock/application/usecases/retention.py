@@ -16,6 +16,7 @@ class CleanupRetentionUseCase:
 
   async def execute(self, *, limit: int = 100) -> int:
     validate_page(limit)
+
     if not self.policy.enabled:
       return 0
 
