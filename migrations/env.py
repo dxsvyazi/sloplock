@@ -2,17 +2,18 @@ import asyncio
 import os
 from logging.config import fileConfig
 
+from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-from alembic import context
 from stocklock.infrastructure.models import BaseORM
 from stocklock.infrastructure.models.confirmation import ConfirmationORM  # noqa: F401
 from stocklock.infrastructure.models.product import ProductORM  # noqa: F401
 from stocklock.infrastructure.models.reservation import ReservationORM  # noqa: F401
 
 config = context.config
+
 if config.config_file_name is not None:
   fileConfig(config.config_file_name, disable_existing_loggers=False)
 
@@ -20,7 +21,11 @@ target_metadata = BaseORM.metadata
 
 
 def database_url() -> str:
-  return os.environ.get("STOCKLOCK_DATABASE_URL") or config.get_main_option("sqlalchemy.url")
+  url = os.environ.get("STOCKLOCK_DATABASE_URL") or config.get_main_option("sqlalchemy.url")
+
+  assert url
+
+  return url
 
 
 def run_migrations_offline() -> None:

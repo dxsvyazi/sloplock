@@ -1,7 +1,7 @@
+from functools import partial
 from uuid import UUID
 
 from stocklock.shared.constraints import (
-  DEFAULT_PAGE_SIZE,
   MAX_IDEMPOTENCY_KEY_BYTES,
   MAX_IDEMPOTENCY_KEY_LENGTH,
   MAX_PAGE_SIZE,
@@ -10,9 +10,14 @@ from stocklock.shared.constraints import (
 from stocklock.shared.exceptions import ValidationException
 
 
-def validate_quantity(value: int, *, minimum: int = 0, maximum: int = MAX_STOCK_QUANTITY) -> None:
+def validate_int(value: int, *, minimum: int, maximum: int, field: str) -> None:
   if type(value) is not int or not minimum <= value <= maximum:
-    raise ValidationException(f"Quantity must be an integer between {minimum} and {maximum}")
+    raise ValidationException(f"{field} must be an integer between {minimum} and {maximum}")
+
+
+validate_quantity = partial(validate_int, minimum=0, maximum=MAX_STOCK_QUANTITY, field="Quantity")
+
+validate_page = partial(validate_int, minimum=1, maximum=MAX_PAGE_SIZE, field="Limit")
 
 
 def validate_text(value: str, *, minimum: int = 1, maximum: int | None = None) -> None:
@@ -44,10 +49,6 @@ def validate_idempotency_key(value: str) -> str:
     raise ValidationException(f"Idempotency key must not exceed {MAX_IDEMPOTENCY_KEY_BYTES} UTF-8 bytes")
 
   return value
-
-
-def validate_page(limit: int = DEFAULT_PAGE_SIZE) -> None:
-  validate_quantity(limit, minimum=1, maximum=MAX_PAGE_SIZE)
 
 
 def require_type[T](value: object, expected: type[T]) -> None:

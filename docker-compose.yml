@@ -7,14 +7,14 @@ x-application: &application
   env_file:
     - .env
   environment:
-    STOCKLOCK_DATABASE_URL: ${STOCKLOCK_CONTAINER_DATABASE_URL:?Set a database URL using the postgres hostname}
-    SERVICE_HOST: 0.0.0.0
+    STOCKLOCK_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@stocklock-postgres:5432/${POSTGRES_DB}
 
 services:
   stocklock:
+    container_name: stocklock
     <<: *application
     ports:
-      - 8000:8000
+      - ${SERVICE_PORT}:${SERVICE_PORT}
     volumes:
       - ./stocklock:/base/stocklock
     depends_on:
@@ -22,6 +22,7 @@ services:
         condition: service_completed_successfully
 
   migrate:
+    container_name: stocklock-migrate
     <<: *application
     command: ["uv", "run", "--no-sync", "alembic", "upgrade", "head"]
     depends_on:
@@ -29,6 +30,7 @@ services:
         condition: service_healthy
 
   expiration:
+    container_name: stocklock-expiration
     <<: *application
     command: ["uv", "run", "--no-sync", "python", "-m", "stocklock.infrastructure.workers.expiration"]
     restart: unless-stopped
@@ -38,6 +40,7 @@ services:
         condition: service_completed_successfully
 
   retention:
+    container_name: stocklock-retention
     <<: *application
     command: ["uv", "run", "--no-sync", "python", "-m", "stocklock.infrastructure.workers.retention"]
     restart: on-failure
@@ -47,6 +50,7 @@ services:
         condition: service_completed_successfully
 
   postgres:
+    container_name: stocklock-postgres
     image: postgres:18
     ports:
       - ${POSTGRES_PORT:-5432}:5432
