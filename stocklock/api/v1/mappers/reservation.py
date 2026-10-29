@@ -43,6 +43,7 @@ def list_request_to_command(request: ListReservationsRequest) -> ListReservation
     start_id=request.start_id,
     limit=request.limit,
     status=ReservationStatus[request.status] if request.status is not None else None,
+    product_visibility=request.product_visibility,
   )
 
 
@@ -55,6 +56,7 @@ def list_product_request_to_command(
     start_id=request.start_id,
     limit=request.limit,
     status=ReservationStatus[request.status] if request.status is not None else None,
+    product_visibility=request.product_visibility,
   )
 
 

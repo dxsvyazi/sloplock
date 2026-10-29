@@ -6,7 +6,7 @@ from uuid import UUID
 from stocklock.domain.entities.reservation import Reservation
 from stocklock.domain.value_objects.reservation import IdempotencyKey
 from stocklock.shared.constraints import DEFAULT_PAGE_SIZE
-from stocklock.shared.enums import ReservationStatus
+from stocklock.shared.enums import ProductVisibility, ReservationStatus
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +43,7 @@ class IReservationRepository(ABC):
     *,
     product_id: UUID | None = None,
     status: ReservationStatus | None = None,
+    product_visibility: ProductVisibility = ProductVisibility.all,
     start_id: UUID | None = None,
     limit: int = DEFAULT_PAGE_SIZE,
   ) -> list[Reservation]: ...

@@ -166,3 +166,25 @@ accepts `IdempotencyKey`. ORM mappers construct typed domain fields on hydration
 and unwrap `.value` for inserts and updates. Stock-delta arithmetic stays in one
 conditional SQL update; its bound parameters fit PostgreSQL's integer range for
 both positive and negative adjustments.
+
+## Product deletion and garbage collection
+
+`ProductRepository.find_by_id` returns the full entity, including `deleted_at`;
+the domain service enforces caller visibility. Product lists apply visibility
+before cursor pagination. Reservation visibility filtering joins products before
+status/cursor limiting. Product stock and detail writes exclude deleted records.
+
+Deletion locks the product first, then reads active holds without reservation row
+locks. This serializes with new reservations without reversing cancellation and
+expiration's reservation-then-product order. An uncommitted terminal transition
+is conservatively observed as active; deletion returns a conflict and can be
+retried after commit. `save_deletion` and `hard_delete` require the caller's
+product lock and active-hold check. Hard deletion cascades through reservations
+to confirmations atomically; explicit erasure overrides retention.
+
+`purge_deleted` locks at most the supplied batch size using `SKIP LOCKED`, selects
+only products with `deleted_at` at or before cutoff and no reservations, and
+rechecks eligibility when deleting. It never purges visible products, history,
+or stock. Concurrent erasure and retention cleanup may serialize or skip records
+and revisit them later. Migration `0004_product_deletion` adds the deletion
+column/index and cascading foreign keys; downgrade cannot restore erased data.

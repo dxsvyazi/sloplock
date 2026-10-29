@@ -239,3 +239,25 @@ Services trust UUID-typed identifiers and cursors supplied by callers; HTTP adap
 validate their transport representation, and entity constructors validate stored identities.
 Direct callers receive business validation errors from `execute`, rather than from
 command construction. Invalid execution rolls back its transaction.
+
+## Product deletion
+
+`DeleteProductUseCase` locks the product in its application transaction, then
+`ProductService.delete` checks stored active-held quantity in a separate query.
+Soft deletion uses an aware database-clock UTC timestamp and persists `deleted_at`
+and `updated_at` once. Deleted entities reject edits; ordinary product service
+lookups exclude them. The delete use case deliberately includes deleted products
+so a soft deletion retry is idempotent and hard deletion can erase hidden records.
+
+Hard deletion is an explicitly authenticated history-erasure operation. It uses
+database cascades, with no stock changes; any failure rolls back the entire
+cascade. Both modes reject overdue active holds until normal expiration commits.
+`GetProductUseCase` permits explicit administrative inclusion, product listing
+supports visibility filters, and reservation listing preserves all history by
+default. Product-scoped reservation lists include deleted products so history
+remains accessible. Confirmation retry rules remain unchanged for soft deletion.
+
+`CleanupProductsUseCase` has its own retention policy and bounded transaction;
+it waits for existing reservation retention to remove all references. It does
+not override indefinitely retained history or share the reservation worker's
+process. See README for HTTP security and concrete configuration.

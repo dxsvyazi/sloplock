@@ -21,6 +21,7 @@ Run each worker in a separate process:
 ```sh
 uv run python -m stocklock.infrastructure.workers.expiration
 uv run python -m stocklock.infrastructure.workers.retention
+uv run python -m stocklock.infrastructure.workers.product_cleanup
 ```
 
 `SERVICE_HOST` defaults to `0.0.0.0`, `SERVICE_PORT` to `8000`, and
@@ -36,7 +37,7 @@ docker compose up --build
 ```
 
 Compose waits for PostgreSQL health, applies Alembic migrations, then starts the
-API, expiration worker, and retention worker. Both `dev` and `prod` image targets
+API, expiration worker, reservation retention worker, and product cleanup worker. Both `dev` and `prod` image targets
 install locked runtime dependencies. PostgreSQL is pinned to version 18 and stores its cluster
 under the volume mounted at `/var/lib/postgresql`; migrate an existing cluster
 before reusing a volume initialized by a different major version or layout.
@@ -111,3 +112,63 @@ Set `RETENTION_CLEANUP_INTERVAL_SECONDS` to change the sweep interval. If all
 three retention settings are zero, the CLI exits successfully without connecting
 to the database. Increase Compose's retention `stop_grace_period` when increasing
 the operation timeout; leave time for rollback and connection shutdown.
+
+## Administrative product deletion
+
+Configure `ADMIN_API_TOKEN` with a private bearer token and send it as
+`Authorization: Bearer <token>`. Administrative deletion and inspection of hidden
+products are disabled (HTTP 503) when the token is unset or blank; missing or
+incorrect credentials return 401 with a bearer challenge. Use the deployment's
+HTTPS endpoint for administrative requests. This is a shared administrator
+credential, with no user accounts or role management.
+
+`DELETE /api/v1/products/{product_id}` soft-deletes by default. Add `?mode=hard`
+for explicit, irreversible erasure of the product and its reservations and
+confirmations, regardless of their retention settings. Both modes reject any
+stored active reservations with HTTP 409, including overdue holds awaiting normal
+expiration. Successful deletion returns an empty HTTP 204. Unknown products return
+404. Repeating soft deletion preserves its timestamp and returns 204; repeating
+hard deletion returns 404.
+
+Soft-deleted products cannot be edited, have stock corrected, or receive new
+reservations (including reservation-creation retries). Those operations and normal
+product detail requests return 404. Reservation and confirmation history remains
+accessible, and successful confirmation retries still return the original result.
+Hard deletion makes all those historical lookups and confirmation retries return
+404. Deletion does not cancel reservations or adjust stock.
+
+Product lists default to `visibility=visible`; administrators can select `deleted`
+or `all`. Administrators can inspect a deleted product using
+`GET /api/v1/products/{product_id}?include_deleted=true`. Product responses include
+nullable `deleted_at`. Reservation lists default to `product_visibility=all`,
+preserving historical results, and support `visible` or `deleted` alongside status
+filtering and pagination. Explicit `product_visibility=deleted` requires admin
+credentials. A product's reservation list remains available after soft deletion.
+There is no restore operation.
+
+Run product garbage collection separately:
+
+```sh
+uv run python -m stocklock.infrastructure.workers.product_cleanup
+```
+
+Compose starts this worker after migrations. `DELETED_PRODUCT_RETENTION_SECONDS`
+defaults to 2592000 (30 days) from `deleted_at`; `0` keeps soft-deleted products
+indefinitely. Cleanup removes only eligible soft-deleted products **without any
+remaining reservations**. Existing reservation retention policies still apply;
+indefinitely retained history also preserves its product. Visible products are
+never removed automatically. Product cleanup does not erase history or change
+stock, and can run independently of reservation retention.
+
+`PRODUCT_CLEANUP_INTERVAL_SECONDS` defaults to 86400, `PRODUCT_CLEANUP_BATCH_SIZE`
+to 100 (maximum 100), `PRODUCT_CLEANUP_MAX_BATCHES` to 100, and
+`PRODUCT_CLEANUP_OPERATION_TIMEOUT_SECONDS` to 30. Each sweep is bounded, skips
+locked products, and retries failures on a later sweep. A disabled product worker
+exits successfully without connecting to PostgreSQL. Increase its Compose
+`stop_grace_period` if increasing the operation timeout.
+
+Expiration, reservation retention, and product cleanup share a `BaseWorker` with
+common limit validation and a stop-aware `run` loop. Each implements `_run_once`
+and declares an `exception_message` used for failure logging. `run_once` remains
+available for one sweep and propagates failures; `run` logs failures and retries
+after its interval. Task cancellation propagates for transaction rollback.

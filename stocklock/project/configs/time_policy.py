@@ -24,6 +24,11 @@ class TimePolicySettings(CustomBaseSettings):
   EXPIRED_RESERVATION_RETENTION_SECONDS: RetentionSeconds = 2592000
   CANCELLED_RESERVATION_RETENTION_SECONDS: RetentionSeconds = 2592000
   CONFIRMATION_RETENTION_SECONDS: RetentionSeconds = 2592000
+  DELETED_PRODUCT_RETENTION_SECONDS: RetentionSeconds = 2592000
+  PRODUCT_CLEANUP_INTERVAL_SECONDS: PositiveSeconds = 86400
+  PRODUCT_CLEANUP_BATCH_SIZE: Annotated[int, Field(gt=0, le=MAX_PAGE_SIZE)] = 100
+  PRODUCT_CLEANUP_MAX_BATCHES: PositiveSeconds = 100
+  PRODUCT_CLEANUP_OPERATION_TIMEOUT_SECONDS: PositiveSeconds = 30
   RETENTION_BATCH_SIZE: Annotated[int, Field(gt=0, le=MAX_PAGE_SIZE)] = 100
   RETENTION_MAX_BATCHES: PositiveSeconds = 100
   RETENTION_OPERATION_TIMEOUT_SECONDS: PositiveSeconds = 30
@@ -35,6 +40,11 @@ class TimePolicySettings(CustomBaseSettings):
     "EXPIRED_RESERVATION_RETENTION_SECONDS",
     "CANCELLED_RESERVATION_RETENTION_SECONDS",
     "CONFIRMATION_RETENTION_SECONDS",
+    "DELETED_PRODUCT_RETENTION_SECONDS",
+    "PRODUCT_CLEANUP_INTERVAL_SECONDS",
+    "PRODUCT_CLEANUP_BATCH_SIZE",
+    "PRODUCT_CLEANUP_MAX_BATCHES",
+    "PRODUCT_CLEANUP_OPERATION_TIMEOUT_SECONDS",
     "RETENTION_BATCH_SIZE",
     "RETENTION_MAX_BATCHES",
     "RETENTION_OPERATION_TIMEOUT_SECONDS",
@@ -77,6 +87,18 @@ class TimePolicySettings(CustomBaseSettings):
   @property
   def confirmation_retention(self) -> timedelta | None:
     return _retention_duration(self.CONFIRMATION_RETENTION_SECONDS)
+
+  @property
+  def deleted_product_retention(self) -> timedelta | None:
+    return _retention_duration(self.DELETED_PRODUCT_RETENTION_SECONDS)
+
+  @property
+  def product_cleanup_interval(self) -> timedelta:
+    return timedelta(seconds=self.PRODUCT_CLEANUP_INTERVAL_SECONDS)
+
+  @property
+  def product_cleanup_operation_timeout(self) -> timedelta:
+    return timedelta(seconds=self.PRODUCT_CLEANUP_OPERATION_TIMEOUT_SECONDS)
 
 
 def _retention_duration(seconds: int) -> timedelta | None:

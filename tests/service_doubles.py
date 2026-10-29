@@ -18,7 +18,7 @@ from stocklock.domain.validation import require_type
 from stocklock.domain.value_objects.product import StockDelta
 from stocklock.domain.value_objects.reservation import IdempotencyKey
 from stocklock.shared.constraints import MAX_STOCK_QUANTITY
-from stocklock.shared.enums import ReservationStatus
+from stocklock.shared.enums import ProductVisibility, ReservationStatus
 from stocklock.shared.exceptions import DynamicException
 from stocklock.shared.utils import utc_now
 
@@ -69,9 +69,37 @@ class Products(IProductRepository):
     self.store.check()
     return deepcopy(self.store.products.get(id))
 
-  async def find_many(self, *, start_id: UUID | None = None, limit: int = 50) -> list[Product]:
+  async def find_many(
+    self,
+    *,
+    start_id: UUID | None = None,
+    limit: int = 50,
+    visibility: ProductVisibility = ProductVisibility.visible,
+  ) -> list[Product]:
     self.store.check()
-    return page(self.store.products.values(), start_id, limit)
+    return page(
+      (
+        p
+        for p in self.store.products.values()
+        if visibility is ProductVisibility.all or (p.deleted_at is None) == (visibility is ProductVisibility.visible)
+      ),
+      start_id,
+      limit,
+    )
+
+  async def save_deletion(self, product: Product) -> None:
+    self.store.check("save_deletion")
+    self.store.products[product.id] = deepcopy(product)
+
+  async def hard_delete(self, id: UUID) -> None:
+    self.store.check("hard_delete")
+    del self.store.products[id]
+    ids = {r.id for r in self.store.reservations.values() if r.product_id == id}
+    self.store.reservations = {k: v for k, v in self.store.reservations.items() if k not in ids}
+    self.store.confirmations = {k: v for k, v in self.store.confirmations.items() if k not in ids}
+
+  async def purge_deleted(self, cutoff, *, limit):
+    raise NotImplementedError("Product cleanup is tested against PostgreSQL")
 
   async def create(self, product: Product) -> Product:
     self.store.check("create_product")
@@ -144,6 +172,7 @@ class Reservations(IReservationRepository):
     *,
     product_id: UUID | None = None,
     status: ReservationStatus | None = None,
+    product_visibility: ProductVisibility = ProductVisibility.all,
     start_id: UUID | None = None,
     limit: int = 50,
   ) -> list[Reservation]:
@@ -152,7 +181,12 @@ class Reservations(IReservationRepository):
       (
         r
         for r in self.store.reservations.values()
-        if (product_id is None or r.product_id == product_id) and (status is None or r.status == status)
+        if (product_id is None or r.product_id == product_id)
+        and (status is None or r.status == status)
+        and (
+          product_visibility is ProductVisibility.all
+          or (self.store.products[r.product_id].deleted_at is None) == (product_visibility is ProductVisibility.visible)
+        )
       ),
       start_id,
       limit,

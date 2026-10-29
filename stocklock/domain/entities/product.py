@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Any, Final, Literal, NotRequired, Self, TypedDict
 
 from stocklock.domain.entities.base import BaseEntity
-from stocklock.domain.errors import InsufficientStock, StockCapacityExceeded, StockLimitExceeded
+from stocklock.domain.errors import InsufficientStock, ProductNotFound, StockCapacityExceeded, StockLimitExceeded
 from stocklock.domain.validation import require_type, validate_id
 from stocklock.domain.value_objects.product import SKU, ProductName, StockDelta, StockQuantity
 from stocklock.shared.constraints import MAX_STOCK_QUANTITY
@@ -32,6 +32,7 @@ class Product(BaseEntity):
   stock_quantity: StockQuantity
   created_at: datetime = field(default_factory=utc_now)
   updated_at: datetime | None = None
+  deleted_at: datetime | None = None
 
   def __post_init__(self) -> None:
     validate_id(self.id)
@@ -43,6 +44,20 @@ class Product(BaseEntity):
 
     if self.updated_at is not None:
       self._set("updated_at", as_utc(self.updated_at))
+
+    if self.deleted_at is not None:
+      self._set("deleted_at", as_utc(self.deleted_at))
+
+  def ensure_visible(self) -> None:
+    if self.deleted_at is not None:
+      raise ProductNotFound
+
+  def soft_delete(self, at: datetime) -> None:
+    at = as_utc(at)
+
+    if self.deleted_at is None:
+      self._set("deleted_at", at)
+      self._set("updated_at", at)
 
   @classmethod
   def create(cls, *, name: str, sku: str, stock_quantity: int) -> Self:
@@ -60,6 +75,7 @@ class Product(BaseEntity):
       raise StockCapacityExceeded
 
   def update_details(self, details: ProductDetailsPatch) -> None:
+    self.ensure_visible()
     if not details:
       raise MissingProductDetails
 
@@ -83,10 +99,12 @@ class Product(BaseEntity):
       self._set("updated_at", utc_now())
 
   def correct_stock(self, quantity: StockQuantity, *, held_quantity: int = 0) -> None:
+    self.ensure_visible()
     self.validate_return_capacity(quantity, held_quantity)
     self._set_stock(quantity)
 
   def adjust_stock(self, delta: StockDelta) -> None:
+    self.ensure_visible()
     require_type(delta, StockDelta)
 
     quantity = self.stock_quantity.value + delta.value

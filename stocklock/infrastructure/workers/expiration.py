@@ -4,16 +4,13 @@ import asyncio
 import logging
 import signal
 from dataclasses import dataclass, field
-from datetime import timedelta
 from uuid import UUID
-
-from wireup import AsyncContainer
 
 from stocklock.application.commands.common import PageCommand
 from stocklock.application.commands.reservation import ExpireReservationCommand, ExpireReservationsCommand
 from stocklock.application.usecases.expiration import ExpireReservationsUseCase, ListDueReservationsUseCase
 from stocklock.application.usecases.reservation import TryExpireReservationUseCase
-from stocklock.domain.validation import validate_page
+from stocklock.infrastructure.workers.base import BaseWorker
 from stocklock.project.configs.time_policy import TimePolicySettings
 from stocklock.project.container import create_container
 
@@ -21,20 +18,11 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
-class ExpirationWorker:
-  container: AsyncContainer
-  interval: timedelta
-  batch_size: int = 100
-  max_batches: int = 100
-  operation_timeout: timedelta = timedelta(seconds=30)
+class ExpirationWorker(BaseWorker):
+  exception_message = "Expiration sweep failed; retrying after the configured interval"
   _cursor: UUID | None = field(default=None, init=False)
 
-  def __post_init__(self) -> None:
-    validate_page(self.batch_size)
-    if self.interval <= timedelta(0) or self.max_batches < 1 or self.operation_timeout <= timedelta(0):
-      raise ValueError("Worker interval, batch count, and operation timeout must be positive")
-
-  async def run_once(self, *, stop: asyncio.Event | None = None) -> None:
+  async def _run_once(self, *, stop: asyncio.Event | None = None) -> None:
     for _ in range(self.max_batches):
       if stop is not None and stop.is_set():
         return
@@ -78,18 +66,6 @@ class ExpirationWorker:
             await expire.execute(ExpireReservationCommand(reservation_id=reservation_id))
       except Exception:
         logger.exception("Failed to expire reservation %s", reservation_id)
-
-  async def run(self, stop: asyncio.Event) -> None:
-    while not stop.is_set():
-      try:
-        await self.run_once(stop=stop)
-      except Exception:
-        logger.exception("Expiration sweep failed; retrying after the configured interval")
-
-      try:
-        await asyncio.wait_for(stop.wait(), timeout=self.interval.total_seconds())
-      except TimeoutError:
-        pass
 
 
 async def main() -> None:

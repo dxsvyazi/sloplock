@@ -21,6 +21,13 @@ bootstrap; several service, adapter, and application files are still scaffolding
 - Adjust product details.
 - Adjust available stock for administrative inventory corrections.
 - Retrieve reservations associated with a product.
+- Administrators may soft-delete products or explicitly hard-delete them with
+  cascading reservation and confirmation history erasure. Both modes reject any
+  stored active reservation, including overdue holds. Soft deletion blocks new
+  reservations and edits and preserves terminal history and confirmation retries.
+- Product lists hide deleted products by default; administrative visibility
+  filters and detail inclusion require bearer authentication. Reservation history
+  remains accessible after soft deletion; global lists default to all products.
 
 ### Reservations
 
@@ -46,8 +53,13 @@ bootstrap; several service, adapter, and application files are still scaffolding
   zero means keep that state's history indefinitely.
 - Delete eligible records in bounded transactions through a separate retention
   worker. Delete confirmations with their associated reservations atomically.
-- Never purge active reservations or products, and never change stock during
-  retention cleanup. Overdue active reservations must first be expired normally.
+- Reservation retention never purges active reservations or products and never
+  changes stock. Overdue active reservations must first be expired normally.
+- A separate product cleanup worker may remove soft-deleted products after their
+  configured deletion retention period only when no reservations remain. Zero
+  disables product cleanup. It never removes visible products or changes stock.
+- Explicit authenticated hard deletion intentionally overrides terminal-history
+  retention and erases associated reservations and confirmations atomically.
 - Idempotency keys become reusable after their reservation is deleted. Operators
   own historical exports and retention of externally collected logs.
 
@@ -90,7 +102,8 @@ with the API router configuration.
 | --- | --- | --- |
 | POST | `/products` | Create a product with an initial stock quantity. |
 | GET | `/products` | List products and their current available stock. |
-| GET | `/products/{product_id}` | Retrieve product details and available stock. |
+| GET | `/products/{product_id}` | Retrieve product details and available stock; admins may include deleted products. |
+| DELETE | `/products/{product_id}` | Admin deletion with `mode=soft` (default) or explicit `mode=hard`; active holds block both. |
 | PATCH | `/products/{product_id}/stock` | Adjust available stock for an administrative inventory correction. |
 | GET | `/products/{product_id}/reservations` | List a product's reservations, optionally filtered by status. |
 | POST | `/products/{product_id}/reservations` | Atomically reserve a requested quantity for a limited time. |

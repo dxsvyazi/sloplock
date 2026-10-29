@@ -6,6 +6,7 @@ from uuid import UUID
 from stocklock.domain.entities.product import Product, ProductDetailField
 from stocklock.domain.value_objects.product import SKU, ProductName, StockDelta, StockQuantity
 from stocklock.shared.constraints import DEFAULT_PAGE_SIZE
+from stocklock.shared.enums import ProductVisibility
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,7 +39,28 @@ class IProductRepository(ABC):
   async def find_by_id(self, id: UUID, *, for_update: bool = False) -> Product | None: ...
 
   @abstractmethod
-  async def find_many(self, *, start_id: UUID | None = None, limit: int = DEFAULT_PAGE_SIZE) -> list[Product]: ...
+  async def find_many(
+    self,
+    *,
+    start_id: UUID | None = None,
+    limit: int = DEFAULT_PAGE_SIZE,
+    visibility: ProductVisibility = ProductVisibility.visible,
+  ) -> list[Product]: ...
+
+  @abstractmethod
+  async def save_deletion(self, product: Product) -> None:
+    """Persist deletion timestamp; caller holds product lock and checked active holds."""
+    ...
+
+  @abstractmethod
+  async def hard_delete(self, id: UUID) -> None:
+    """Erase product and history; caller holds product lock and checked active holds."""
+    ...
+
+  @abstractmethod
+  async def purge_deleted(self, cutoff: datetime, *, limit: int) -> int:
+    """Lock and remove a bounded batch of deleted products without any reservations."""
+    ...
 
   @abstractmethod
   async def create(self, product: Product) -> Product: ...

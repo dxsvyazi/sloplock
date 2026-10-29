@@ -6,6 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from wireup import AsyncContainer, create_async_container, injectable
 
 from stocklock.application.policies.reservation import ReservationTimePolicy
+from stocklock.application.policies.product_cleanup import ProductCleanupPolicy
+from stocklock.application.usecases.product_cleanup import CleanupProductsUseCase
 from stocklock.application.policies.retention import RetentionPolicy
 from stocklock.application.ports.clock import IClock
 from stocklock.application.ports.uow import IUnitOfWork
@@ -15,6 +17,7 @@ from stocklock.application.usecases.retention import CleanupRetentionUseCase
 from stocklock.application.usecases.product import (
   CorrectProductStockUseCase,
   CreateProductUseCase,
+  DeleteProductUseCase,
   GetProductUseCase,
   ListProductsUseCase,
   UpdateProductUseCase,
@@ -41,6 +44,7 @@ from stocklock.infrastructure.repositories.reservation_repository import Reserva
 from stocklock.infrastructure.session_manager import SessionManager
 from stocklock.infrastructure.uow import SqlAlchemyUnitOfWork
 from stocklock.project.configs.database import DatabaseSettings
+from stocklock.project.configs.admin import AdminSettings
 from stocklock.project.configs.time_policy import TimePolicySettings
 
 
@@ -56,6 +60,21 @@ def retention_policy(settings: TimePolicySettings) -> RetentionPolicy:
     cancelled=settings.cancelled_reservation_retention,
     confirmed=settings.confirmation_retention,
   )
+
+
+@injectable(lifetime="singleton")
+def product_cleanup_policy(settings: TimePolicySettings) -> ProductCleanupPolicy:
+  return ProductCleanupPolicy(retention=settings.deleted_product_retention)
+
+
+@injectable(lifetime="scoped")
+def cleanup_products_use_case(
+  uow: IUnitOfWork,
+  products: IProductRepository,
+  policy: ProductCleanupPolicy,
+  clock: IClock,
+) -> CleanupProductsUseCase:
+  return CleanupProductsUseCase(uow, products, policy, clock)
 
 
 @injectable(lifetime="scoped")
@@ -108,6 +127,11 @@ def confirmation_service(confirmations: IConfirmationRepository) -> Confirmation
 @injectable(lifetime="scoped")
 def create_product_use_case(uow: IUnitOfWork, products: ProductService) -> CreateProductUseCase:
   return CreateProductUseCase(uow, products)
+
+
+@injectable(lifetime="scoped")
+def delete_product_use_case(uow: IUnitOfWork, products: ProductService, clock: IClock) -> DeleteProductUseCase:
+  return DeleteProductUseCase(uow, products, clock)
 
 
 @injectable(lifetime="scoped")
@@ -230,6 +254,7 @@ def create_container(
   session_maker: async_sessionmaker[AsyncSession] | None = None,
   database_settings: DatabaseSettings | None = None,
   time_settings: TimePolicySettings | None = None,
+  admin_settings: AdminSettings | None = None,
 ) -> AsyncContainer:
   """Create a container; Wireup's FastAPI integration owns shutdown.
 
@@ -243,6 +268,10 @@ def create_container(
     return settings
 
   @injectable(lifetime="singleton")
+  def administrative_settings() -> AdminSettings:
+    return admin_settings if admin_settings is not None else AdminSettings()
+
+  @injectable(lifetime="singleton")
   def db_settings() -> DatabaseSettings:
     return database_settings or DatabaseSettings()  # type: ignore
 
@@ -254,10 +283,13 @@ def create_container(
   return create_async_container(
     injectables=[
       time_policy_settings,
+      administrative_settings,
       db_settings,
       *([database_engine, database_session_maker] if session_maker is None else [supplied_session_maker]),
       reservation_time_policy,
       retention_policy,
+      product_cleanup_policy,
+      cleanup_products_use_case,
       cleanup_retention_use_case,
       session_manager,
       clock,
@@ -269,6 +301,7 @@ def create_container(
       reservation_service,
       confirmation_service,
       create_product_use_case,
+      delete_product_use_case,
       get_product_use_case,
       list_products_use_case,
       update_product_use_case,

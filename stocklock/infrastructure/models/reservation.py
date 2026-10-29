@@ -27,7 +27,7 @@ class ReservationORM(BaseORM, IdUUIDMixin, CreatedAtMixin):
     sa.Index("ix_reservations_retention", "status", "finalized_at", "id", postgresql_where=sa.text("status <> 1")),
   )
 
-  product_id: Mapped[UUID] = mapped_column(sa.ForeignKey("products.id"))
+  product_id: Mapped[UUID] = mapped_column(sa.ForeignKey("products.id", ondelete="CASCADE"))
   quantity: Mapped[int]
   status: Mapped[ReservationStatus] = mapped_column(IntEnumType(ReservationStatus))
   key: Mapped[str]

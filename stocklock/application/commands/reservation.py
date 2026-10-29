@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from stocklock.application.commands.common import PageCommand
-from stocklock.shared.enums import ReservationStatus
+from stocklock.shared.enums import ProductVisibility, ReservationStatus
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -35,6 +35,7 @@ class ExpireReservationsCommand:
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ListReservationsCommand(PageCommand):
   status: ReservationStatus | None = None
+  product_visibility: ProductVisibility = ProductVisibility.all
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

@@ -6,3 +6,14 @@ class ReservationStatus(Enum):
   confirmed = auto()
   expired = auto()
   cancelled = auto()
+
+
+class ProductVisibility(Enum):
+  visible = "visible"
+  deleted = "deleted"
+  all = "all"
+
+
+class DeletionMode(Enum):
+  soft = "soft"
+  hard = "hard"

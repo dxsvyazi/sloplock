@@ -12,6 +12,7 @@ from stocklock.api.v1.schemas.common import (
   UTCDateTime,
 )
 from stocklock.shared.exceptions import ValidationException
+from stocklock.shared.enums import ProductVisibility
 
 
 class CreateProductRequest(APISchema):
@@ -37,7 +38,7 @@ class CorrectProductStockRequest(APISchema):
 
 
 class ListProductsRequest(PageRequest):
-  pass
+  visibility: ProductVisibility = ProductVisibility.visible
 
 
 class ProductResponse(APISchema):
@@ -47,3 +48,4 @@ class ProductResponse(APISchema):
   stock_quantity: StockQuantity
   created_at: UTCDateTime
   updated_at: UTCDateTime | None
+  deleted_at: UTCDateTime | None = None

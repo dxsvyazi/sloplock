@@ -7,7 +7,7 @@ from stocklock.domain.ports.repositories.reservation_repository import IReservat
 from stocklock.domain.validation import require_type, validate_id, validate_page
 from stocklock.domain.value_objects.reservation import IdempotencyKey, ReservationQuantity
 from stocklock.shared.constraints import DEFAULT_PAGE_SIZE
-from stocklock.shared.enums import ReservationStatus
+from stocklock.shared.enums import ProductVisibility, ReservationStatus
 from stocklock.shared.exceptions import ValidationException
 
 
@@ -33,6 +33,7 @@ class ReservationService:
     *,
     product_id: UUID | None = None,
     status: ReservationStatus | None = None,
+    product_visibility: ProductVisibility = ProductVisibility.all,
     start_id: UUID | None = None,
     limit: int = DEFAULT_PAGE_SIZE,
   ) -> list[Reservation]:
@@ -41,7 +42,14 @@ class ReservationService:
     if status is not None:
       Reservation.validate_status(status)
 
-    return await self.reservations.find_many(product_id=product_id, status=status, start_id=start_id, limit=limit)
+    require_type(product_visibility, ProductVisibility)
+    return await self.reservations.find_many(
+      product_id=product_id,
+      status=status,
+      start_id=start_id,
+      limit=limit,
+      product_visibility=product_visibility,
+    )
 
   async def list_due_ids(self, *, start_id: UUID | None = None, limit: int = DEFAULT_PAGE_SIZE) -> "list[UUID]":
     validate_page(limit)

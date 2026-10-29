@@ -72,7 +72,12 @@ class ListReservationsUseCase:
 
   async def execute(self, command: ListReservationsCommand) -> list[Reservation]:
     async with self.uow.begin():
-      return await self.reservations.list(status=command.status, start_id=command.start_id, limit=command.limit)
+      return await self.reservations.list(
+        status=command.status,
+        start_id=command.start_id,
+        limit=command.limit,
+        product_visibility=command.product_visibility,
+      )
 
 
 @dataclass(slots=True)
@@ -83,10 +88,14 @@ class ListProductReservationsUseCase:
 
   async def execute(self, command: ListProductReservationsCommand) -> list[Reservation]:
     async with self.uow.begin():
-      await self.products.require(command.product_id)
+      await self.products.require(command.product_id, include_deleted=True)
 
       return await self.reservations.list(
-        product_id=command.product_id, status=command.status, start_id=command.start_id, limit=command.limit
+        product_id=command.product_id,
+        status=command.status,
+        start_id=command.start_id,
+        limit=command.limit,
+        product_visibility=command.product_visibility,
       )
 
 

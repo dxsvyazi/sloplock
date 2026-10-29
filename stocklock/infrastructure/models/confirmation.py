@@ -10,4 +10,4 @@ from stocklock.shared.sqlalchemy.mixins import CreatedAtMixin, IdUUIDMixin
 class ConfirmationORM(BaseORM, IdUUIDMixin, CreatedAtMixin):
   __tablename__ = "confirmations"
 
-  reservation_id: Mapped[UUID] = mapped_column(sa.ForeignKey("reservations.id"), unique=True)
+  reservation_id: Mapped[UUID] = mapped_column(sa.ForeignKey("reservations.id", ondelete="CASCADE"), unique=True)

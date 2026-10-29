@@ -22,6 +22,7 @@ def orm_to_domain(row: ProductORM) -> Product:
     stock_quantity=StockQuantity(row.stock_quantity),
     created_at=row.created_at,
     updated_at=row.updated_at,
+    deleted_at=row.deleted_at,
   )
 
 
@@ -34,4 +35,5 @@ def domain_to_orm(product: Product) -> ProductORM:
     stock_quantity=product.stock_quantity.value,
     created_at=product.created_at,
     updated_at=product.updated_at,
+    deleted_at=product.deleted_at,
   )

@@ -49,6 +49,16 @@ services:
       migrate:
         condition: service_completed_successfully
 
+  product-cleanup:
+    container_name: stocklock-product-cleanup
+    <<: *application
+    command: ["uv", "run", "--no-sync", "python", "-m", "stocklock.infrastructure.workers.product_cleanup"]
+    restart: on-failure
+    stop_grace_period: 35s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
   postgres:
     container_name: stocklock-postgres
     image: postgres:18

@@ -4,22 +4,26 @@ from uuid import UUID
 from sqlalchemy import delete, func, or_, select, update
 
 from stocklock.domain.entities.reservation import Reservation
+from stocklock.domain.validation import validate_page
 from stocklock.domain.ports.repositories.reservation_repository import IReservationRepository
 from stocklock.domain.value_objects.reservation import IdempotencyKey
 from stocklock.infrastructure.mappers.reservation import domain_to_orm, orm_to_domain
 from stocklock.infrastructure.models.confirmation import ConfirmationORM
+from stocklock.infrastructure.models.product import ProductORM
 from stocklock.infrastructure.models.reservation import ReservationORM
 from stocklock.infrastructure.repositories.base import SessionRepository, paginate
 from stocklock.shared.constraints import DEFAULT_PAGE_SIZE
-from stocklock.shared.enums import ReservationStatus
+from stocklock.shared.enums import ProductVisibility, ReservationStatus
 from stocklock.shared.utils.timestamps import as_utc
 
 
 class ReservationRepository(SessionRepository, IReservationRepository):
   async def purge_terminal(self, cutoffs: dict[ReservationStatus, datetime], *, limit: int) -> int:
+    validate_page(limit)
     conditions = []
 
     for status, cutoff in cutoffs.items():
+      Reservation.validate_target(status)
       conditions.append((ReservationORM.status == status) & (ReservationORM.finalized_at <= as_utc(cutoff)))
 
     if not conditions:
@@ -74,10 +78,19 @@ class ReservationRepository(SessionRepository, IReservationRepository):
     *,
     product_id: UUID | None = None,
     status: ReservationStatus | None = None,
+    product_visibility: ProductVisibility = ProductVisibility.all,
     start_id: UUID | None = None,
     limit: int = DEFAULT_PAGE_SIZE,
   ) -> list[Reservation]:
     stmt = select(ReservationORM)
+
+    if product_visibility is not ProductVisibility.all:
+      stmt = stmt.join(ProductORM, ProductORM.id == ReservationORM.product_id)
+      stmt = stmt.where(
+        ProductORM.deleted_at.is_(None)
+        if product_visibility is ProductVisibility.visible
+        else ProductORM.deleted_at.is_not(None)
+      )
 
     if product_id is not None:
       stmt = stmt.where(ReservationORM.product_id == product_id)

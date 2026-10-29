@@ -46,3 +46,7 @@ class StockCapacityExceeded(StockLimitExceeded):
 
 class MissingConfirmation(StaticException):
   message = "Confirmed reservation has no confirmation result"
+
+
+class ProductHasActiveReservations(StaticException):
+  message = "Product has active reservations"

@@ -34,7 +34,7 @@ from stocklock.infrastructure.session_manager import SessionManager
 from stocklock.shared.enums import ReservationStatus
 
 
-async def request(app, method, path, body=None, query=None):
+async def request(app, method, path, body=None, query=None, headers=None):
   messages = []
   sent = False
 
@@ -61,7 +61,10 @@ async def request(app, method, path, body=None, query=None):
           "raw_path": ("/api/v1" + path).encode(),
           "query_string": urlencode(query or {}).encode(),
           "root_path": "",
-          "headers": [(b"content-type", b"application/json")],
+          "headers": [
+            (b"content-type", b"application/json"),
+            *((k.lower().encode(), v.encode()) for k, v in (headers or {}).items()),
+          ],
           "client": ("test", 1),
           "server": ("test", 80),
         },

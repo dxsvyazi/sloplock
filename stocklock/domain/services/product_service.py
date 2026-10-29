@@ -1,9 +1,10 @@
 from dataclasses import dataclass, replace
+from datetime import datetime
 from uuid import UUID
 
 from stocklock.domain.entities.product import _ALLOWED_DETAILS, Product
 from stocklock.domain.entities.reservation import Reservation
-from stocklock.domain.errors import InsufficientStock, ProductNotFound, StockLimitExceeded
+from stocklock.domain.errors import InsufficientStock, ProductHasActiveReservations, ProductNotFound, StockLimitExceeded
 from stocklock.domain.ports.repositories.product_repository import (
   IProductRepository,
   ProductDetailField,
@@ -14,6 +15,7 @@ from stocklock.domain.validation import require_type, validate_page
 from stocklock.domain.value_objects.product import StockDelta
 from stocklock.domain.value_objects.reservation import ReservationQuantity
 from stocklock.shared.constraints import DEFAULT_PAGE_SIZE, MAX_STOCK_QUANTITY
+from stocklock.shared.enums import DeletionMode, ProductVisibility
 from stocklock.shared.exceptions import ValidationException
 
 
@@ -26,18 +28,44 @@ class ProductService:
   async def create(self, product: Product) -> Product:
     return await self.products.create(product)
 
-  async def require(self, product_id: UUID, *, for_update: bool = False) -> Product:
+  async def require(
+    self,
+    product_id: UUID,
+    *,
+    for_update: bool = False,
+    include_deleted: bool = False,
+  ) -> Product:
     product = await self.products.find_by_id(product_id, for_update=for_update)
 
-    if product is None:
+    if product is None or (product.deleted_at is not None and not include_deleted):
       raise ProductNotFound
 
     return product
 
-  async def list(self, *, start_id: UUID | None = None, limit: int = DEFAULT_PAGE_SIZE) -> list[Product]:
+  async def list(
+    self,
+    *,
+    start_id: UUID | None = None,
+    limit: int = DEFAULT_PAGE_SIZE,
+    visibility: ProductVisibility = ProductVisibility.visible,
+  ) -> list[Product]:
     validate_page(limit)
 
-    return await self.products.find_many(start_id=start_id, limit=limit)
+    require_type(visibility, ProductVisibility)
+
+    return await self.products.find_many(start_id=start_id, limit=limit, visibility=visibility)
+
+  async def delete(self, product: Product, *, mode: DeletionMode, at: datetime) -> None:
+    require_type(mode, DeletionMode)
+
+    if await self.products.active_held_quantity(product.id):
+      raise ProductHasActiveReservations
+
+    if mode is DeletionMode.hard:
+      await self.products.hard_delete(product.id)
+    elif product.deleted_at is None:
+      product.soft_delete(at)
+      await self.products.save_deletion(product)
 
   async def save_details(self, product: Product, *, original: ProductDetailsSnapshot) -> Product:
     """Compare domain values; caller fetched and mutated the product under its lock."""

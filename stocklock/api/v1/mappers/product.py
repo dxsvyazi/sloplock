@@ -21,8 +21,8 @@ def create_request_to_command(request: CreateProductRequest) -> CreateProductCom
   return CreateProductCommand(name=request.name, sku=request.sku, stock_quantity=request.stock_quantity)
 
 
-def get_request_to_command(product_id: UUID) -> GetProductCommand:
-  return GetProductCommand(product_id=product_id)
+def get_request_to_command(product_id: UUID, *, include_deleted: bool = False) -> GetProductCommand:
+  return GetProductCommand(product_id=product_id, include_deleted=include_deleted)
 
 
 def update_request_to_command(product_id: UUID, request: UpdateProductRequest) -> UpdateProductCommand:
@@ -34,7 +34,7 @@ def stock_request_to_command(product_id: UUID, request: CorrectProductStockReque
 
 
 def list_request_to_command(request: ListProductsRequest) -> ListProductsCommand:
-  return ListProductsCommand(start_id=request.start_id, limit=request.limit)
+  return ListProductsCommand(start_id=request.start_id, limit=request.limit, visibility=request.visibility)
 
 
 def domain_to_response(product: Product) -> ProductResponse:
@@ -45,4 +45,5 @@ def domain_to_response(product: Product) -> ProductResponse:
     stock_quantity=product.stock_quantity.value,
     created_at=product.created_at,
     updated_at=product.updated_at,
+    deleted_at=product.deleted_at,
   )

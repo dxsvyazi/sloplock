@@ -5,6 +5,7 @@ from stocklock.domain.errors import (
   IdempotencyConflict,
   InsufficientStock,
   NotFound,
+  ProductHasActiveReservations,
   ReservationUnavailable,
   StockLimitExceeded,
 )
@@ -25,6 +26,7 @@ async def handle_error(request: Request, error: Exception) -> JSONResponse:
 def register_error_handlers(app: FastAPI) -> None:
   for error_type in (
     NotFound,
+    ProductHasActiveReservations,
     ValidationException,
     InsufficientStock,
     IdempotencyConflict,

@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from stocklock.application.commands.common import PageCommand
+from stocklock.shared.enums import DeletionMode, ProductVisibility
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -14,6 +15,7 @@ class CreateProductCommand:
 @dataclass(frozen=True, slots=True, kw_only=True)
 class GetProductCommand:
   product_id: UUID
+  include_deleted: bool = False
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -29,4 +31,10 @@ class CorrectProductStockCommand(GetProductCommand):
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ListProductsCommand(PageCommand):
-  pass
+  visibility: ProductVisibility = ProductVisibility.visible
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class DeleteProductCommand:
+  product_id: UUID
+  mode: DeletionMode = DeletionMode.soft

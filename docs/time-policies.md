@@ -114,3 +114,25 @@ available settings without credentials.
 Worker database operations have a 30-second timeout. A timed-out batch rolls back
 before individual fallback begins. Skipped or failed holds are revisited on a
 later sweep. Compose allows 35 seconds for graceful worker shutdown.
+
+## Soft-deleted product retention
+
+`DELETED_PRODUCT_RETENTION_SECONDS` defaults to 2592000 (30 days) measured from the
+persisted UTC `deleted_at`. Zero disables automatic product removal. The separate
+`product_cleanup` worker uses `PRODUCT_CLEANUP_INTERVAL_SECONDS` (86400),
+`PRODUCT_CLEANUP_BATCH_SIZE` (100, maximum 100), `PRODUCT_CLEANUP_MAX_BATCHES` (100),
+and `PRODUCT_CLEANUP_OPERATION_TIMEOUT_SECONDS` (30). All intervals/limits must be
+positive whole integers; the retention duration alone permits zero.
+
+Product cleanup waits until no reservations remain, regardless of age. Existing
+reservation retention remains in effect for visible and deleted products alike;
+indefinitely retained history prevents automatic product removal. Explicit admin
+hard deletion is the intentional exception and erases terminal history immediately.
+Both administrative deletion modes reject stored active holds, including overdue
+holds; product cleanup never expires or cancels holds implicitly.
+
+All three workers derive from `BaseWorker`, which validates common limits,
+declares `_run_once`, and provides stop-aware `run_once` and `run`. Failed sweeps
+are logged with the subclass's `exception_message` and retried after the configured
+interval. Cancellation propagates. Each worker owns its process, signals,
+container, timeout, and bounded batching; disabling one does not disable another.
