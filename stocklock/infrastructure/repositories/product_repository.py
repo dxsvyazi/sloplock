@@ -5,7 +5,6 @@ from uuid import UUID
 from sqlalchemy import delete, func, select, update
 
 from stocklock.domain.entities.product import Product
-from stocklock.domain.validation import validate_page
 from stocklock.domain.ports.repositories.product_repository import IProductRepository, ProductDetailField
 from stocklock.domain.value_objects.product import StockDelta
 from stocklock.infrastructure.exceptions import EntityUpdateConflict
@@ -125,11 +124,11 @@ class ProductRepository(SessionRepository, IProductRepository):
     )
 
   async def purge_deleted(self, cutoff: datetime, *, limit: int) -> int:
-    validate_page(limit)
     eligible = (
       ProductORM.deleted_at <= as_utc(cutoff),
       ~select(ReservationORM.id).where(ReservationORM.product_id == ProductORM.id).exists(),
     )
+
     ids = tuple(
       await self.session.scalars(
         select(ProductORM.id).where(*eligible).order_by(ProductORM.id).limit(limit).with_for_update(skip_locked=True)
@@ -145,4 +144,5 @@ class ProductRepository(SessionRepository, IProductRepository):
       .returning(ProductORM.id)
       .execution_options(synchronize_session=False)
     )
+
     return len(deleted.all())

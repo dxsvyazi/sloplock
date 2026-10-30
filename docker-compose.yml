@@ -25,6 +25,8 @@ services:
     container_name: stocklock-migrate
     <<: *application
     command: ["uv", "run", "--no-sync", "alembic", "upgrade", "head"]
+    volumes:
+      - ./migrations:/base/migrations
     depends_on:
       postgres:
         condition: service_healthy

@@ -15,11 +15,14 @@ class CleanupProductsUseCase:
   clock: IClock
 
   async def execute(self, *, limit: int = 100) -> int:
-    validate_page(limit)
     if not self.policy.enabled:
       return 0
 
+    validate_page(limit)
+
     async with self.uow.begin():
       cutoff = self.policy.cutoff(await self.clock.now())
+
       assert cutoff is not None
+
       return await self.products.purge_deleted(cutoff, limit=limit)

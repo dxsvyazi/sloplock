@@ -76,6 +76,7 @@ class Product(BaseEntity):
 
   def update_details(self, details: ProductDetailsPatch) -> None:
     self.ensure_visible()
+
     if not details:
       raise MissingProductDetails
 

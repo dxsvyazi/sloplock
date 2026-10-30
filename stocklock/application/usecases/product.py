@@ -8,8 +8,8 @@ from stocklock.application.commands.product import (
   ListProductsCommand,
   UpdateProductCommand,
 )
-from stocklock.application.ports.uow import IUnitOfWork
 from stocklock.application.ports.clock import IClock
+from stocklock.application.ports.uow import IUnitOfWork
 from stocklock.domain.entities.product import Product, ProductDetailsPatch
 from stocklock.domain.ports.repositories.product_repository import ProductDetailsSnapshot, ProductStockSnapshot
 from stocklock.domain.services.product_service import ProductService
@@ -99,4 +99,5 @@ class DeleteProductUseCase:
   async def execute(self, command: DeleteProductCommand) -> None:
     async with self.uow.begin():
       product = await self.products.require(command.product_id, for_update=True, include_deleted=True)
+
       await self.products.delete(product, mode=command.mode, at=await self.clock.now())

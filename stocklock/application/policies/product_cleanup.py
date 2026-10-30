@@ -18,10 +18,10 @@ class ProductCleanupPolicy:
     return self.retention is not None
 
   def cutoff(self, now: datetime) -> datetime | None:
-    now = as_utc(now)
     if self.retention is None:
       return None
+
     try:
-      return now - self.retention
+      return as_utc(now) - self.retention
     except OverflowError:
       return datetime.min.replace(tzinfo=timezone.utc)

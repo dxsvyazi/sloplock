@@ -5,15 +5,13 @@ from fastapi import APIRouter, Query
 from wireup import Injected
 
 from stocklock.api.v1.mappers import reservation as mapper
-from stocklock.api.v1.security import AdminCredentials, require_admin
-from stocklock.project.configs.admin import AdminSettings
-from stocklock.shared.enums import ProductVisibility
 from stocklock.api.v1.schemas.reservation import (
   CreateReservationRequest,
   ListProductReservationsRequest,
   ListReservationsRequest,
   ReservationResponse,
 )
+from stocklock.api.v1.security import AdminCredentials, require_admin
 from stocklock.application.usecases.reservation import (
   CancelReservationUseCase,
   ExpireReservationUseCase,
@@ -22,6 +20,8 @@ from stocklock.application.usecases.reservation import (
   ListReservationsUseCase,
   ReserveProductUseCase,
 )
+from stocklock.project.configs.admin import AdminSettings
+from stocklock.shared.enums import ProductVisibility
 
 router = APIRouter(tags=["reservations"])
 
@@ -61,7 +61,9 @@ async def list_reservations(
   if request.product_visibility is ProductVisibility.deleted:
     require_admin(credentials, admin_settings)
 
-  return [mapper.domain_to_response(item) for item in await usecase.execute(mapper.list_request_to_command(request))]
+  items = await usecase.execute(mapper.list_request_to_command(request))
+
+  return [mapper.domain_to_response(item) for item in items]
 
 
 @router.get("/reservations/{reservation_id}")

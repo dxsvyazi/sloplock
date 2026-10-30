@@ -9,6 +9,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from stocklock.project.configs.admin import AdminSettings
 
 bearer = HTTPBearer(auto_error=False, scheme_name="AdminBearer")
+
 type AdminCredentials = Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)]
 
 

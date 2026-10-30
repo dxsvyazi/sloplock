@@ -38,11 +38,11 @@ class ReservationService:
     limit: int = DEFAULT_PAGE_SIZE,
   ) -> list[Reservation]:
     validate_page(limit)
+    require_type(product_visibility, ProductVisibility)
 
     if status is not None:
       Reservation.validate_status(status)
 
-    require_type(product_visibility, ProductVisibility)
     return await self.reservations.find_many(
       product_id=product_id,
       status=status,

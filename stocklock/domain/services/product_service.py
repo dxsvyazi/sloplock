@@ -62,8 +62,9 @@ class ProductService:
       raise ProductHasActiveReservations
 
     if mode is DeletionMode.hard:
-      await self.products.hard_delete(product.id)
-    elif product.deleted_at is None:
+      return await self.products.hard_delete(product.id)
+
+    if product.deleted_at is None:
       product.soft_delete(at)
       await self.products.save_deletion(product)
 

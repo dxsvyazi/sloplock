@@ -4,7 +4,6 @@ from uuid import UUID
 from sqlalchemy import delete, func, or_, select, update
 
 from stocklock.domain.entities.reservation import Reservation
-from stocklock.domain.validation import validate_page
 from stocklock.domain.ports.repositories.reservation_repository import IReservationRepository
 from stocklock.domain.value_objects.reservation import IdempotencyKey
 from stocklock.infrastructure.mappers.reservation import domain_to_orm, orm_to_domain
@@ -19,12 +18,10 @@ from stocklock.shared.utils.timestamps import as_utc
 
 class ReservationRepository(SessionRepository, IReservationRepository):
   async def purge_terminal(self, cutoffs: dict[ReservationStatus, datetime], *, limit: int) -> int:
-    validate_page(limit)
-    conditions = []
-
-    for status, cutoff in cutoffs.items():
-      Reservation.validate_target(status)
-      conditions.append((ReservationORM.status == status) & (ReservationORM.finalized_at <= as_utc(cutoff)))
+    conditions = [
+      (ReservationORM.status == status) & (ReservationORM.finalized_at <= as_utc(cutoff))
+      for status, cutoff in cutoffs.items()
+    ]
 
     if not conditions:
       return 0

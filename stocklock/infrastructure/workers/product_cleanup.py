@@ -30,6 +30,7 @@ class ProductCleanupWorker(BaseWorker):
 
       if deleted:
         logger.info("Deleted %s soft-deleted products without reservations", deleted)
+
       if deleted < self.batch_size:
         return
 
@@ -42,6 +43,7 @@ async def main() -> None:
 
   try:
     policy = await container.get(ProductCleanupPolicy)
+
     if not policy.enabled:
       logger.info("Product cleanup disabled; keeping soft-deleted products indefinitely")
       return
@@ -51,6 +53,7 @@ async def main() -> None:
       registered_signals.append(signum)
 
     settings = await container.get(TimePolicySettings)
+
     await ProductCleanupWorker(
       container,
       settings.product_cleanup_interval,
@@ -61,6 +64,7 @@ async def main() -> None:
   finally:
     for signum in registered_signals:
       loop.remove_signal_handler(signum)
+
     await container.close()
 
 

@@ -1,14 +1,10 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Query, Response
+from fastapi import APIRouter, Query
 from wireup import Injected
 
 from stocklock.api.v1.mappers import product as mapper
-from stocklock.api.v1.security import AdminCredentials, require_admin
-from stocklock.application.commands.product import DeleteProductCommand
-from stocklock.project.configs.admin import AdminSettings
-from stocklock.shared.enums import DeletionMode, ProductVisibility
 from stocklock.api.v1.schemas.product import (
   CorrectProductStockRequest,
   CreateProductRequest,
@@ -16,6 +12,8 @@ from stocklock.api.v1.schemas.product import (
   ProductResponse,
   UpdateProductRequest,
 )
+from stocklock.api.v1.security import AdminCredentials, require_admin
+from stocklock.application.commands.product import DeleteProductCommand
 from stocklock.application.usecases.product import (
   CorrectProductStockUseCase,
   CreateProductUseCase,
@@ -24,6 +22,8 @@ from stocklock.application.usecases.product import (
   ListProductsUseCase,
   UpdateProductUseCase,
 )
+from stocklock.project.configs.admin import AdminSettings
+from stocklock.shared.enums import DeletionMode, ProductVisibility
 
 router = APIRouter(prefix="/products", tags=["products"])
 
@@ -43,7 +43,9 @@ async def list_products(
   if request.visibility is not ProductVisibility.visible:
     require_admin(credentials, admin_settings)
 
-  return [mapper.domain_to_response(item) for item in await usecase.execute(mapper.list_request_to_command(request))]
+  items = await usecase.execute(mapper.list_request_to_command(request))
+
+  return [mapper.domain_to_response(item) for item in items]
 
 
 @router.get("/{product_id}")
@@ -80,14 +82,14 @@ async def correct_product_stock(
   return mapper.domain_to_response(await usecase.execute(mapper.stock_request_to_command(product_id, request)))
 
 
-@router.delete("/{product_id}", status_code=204, response_class=Response)
+@router.delete("/{product_id}", status_code=204)
 async def delete_product(
   product_id: UUID,
   usecase: Injected[DeleteProductUseCase],
   credentials: AdminCredentials,
   admin_settings: Injected[AdminSettings],
   mode: DeletionMode = DeletionMode.soft,
-) -> Response:
+) -> None:
   require_admin(credentials, admin_settings)
+
   await usecase.execute(DeleteProductCommand(product_id=product_id, mode=mode))
-  return Response(status_code=204)

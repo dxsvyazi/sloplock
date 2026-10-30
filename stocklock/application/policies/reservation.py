@@ -16,9 +16,7 @@ class ReservationTimePolicy:
       raise ValidationException("Reservation lifetime must be a positive duration")
 
   def expiration_for(self, created_at: datetime) -> datetime:
-    created_at = as_utc(created_at)
-
     try:
-      return created_at + self.lifetime
+      return as_utc(created_at) + self.lifetime
     except OverflowError as error:
       raise ValidationException("Reservation lifetime exceeds the supported datetime range") from error
