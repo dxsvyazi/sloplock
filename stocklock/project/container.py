@@ -1,19 +1,19 @@
 """Application composition root and dependency lifetimes."""
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 from wireup import AsyncContainer, create_async_container, injectable
 
-from stocklock.application.policies.reservation import ReservationTimePolicy
 from stocklock.application.policies.product_cleanup import ProductCleanupPolicy
-from stocklock.application.usecases.product_cleanup import CleanupProductsUseCase
+from stocklock.application.policies.reservation import ReservationTimePolicy
 from stocklock.application.policies.retention import RetentionPolicy
 from stocklock.application.ports.clock import IClock
+from stocklock.application.ports.healthcheck import IHealthCheck
 from stocklock.application.ports.uow import IUnitOfWork
 from stocklock.application.usecases.confirmations import ConfirmReservationUseCase, GetConfirmationUseCase
 from stocklock.application.usecases.expiration import ExpireReservationsUseCase, ListDueReservationsUseCase
-from stocklock.application.usecases.retention import CleanupRetentionUseCase
+from stocklock.application.usecases.healthcheck import HealthCheck
 from stocklock.application.usecases.product import (
   CorrectProductStockUseCase,
   CreateProductUseCase,
@@ -22,6 +22,7 @@ from stocklock.application.usecases.product import (
   ListProductsUseCase,
   UpdateProductUseCase,
 )
+from stocklock.application.usecases.product_cleanup import CleanupProductsUseCase
 from stocklock.application.usecases.reservation import (
   CancelReservationUseCase,
   ExpireReservationUseCase,
@@ -31,6 +32,7 @@ from stocklock.application.usecases.reservation import (
   ReserveProductUseCase,
   TryExpireReservationUseCase,
 )
+from stocklock.application.usecases.retention import CleanupRetentionUseCase
 from stocklock.domain.ports.repositories.confirmation_repository import IConfirmationRepository
 from stocklock.domain.ports.repositories.product_repository import IProductRepository
 from stocklock.domain.ports.repositories.reservation_repository import IReservationRepository
@@ -38,13 +40,14 @@ from stocklock.domain.services.confirmation_service import ConfirmationService
 from stocklock.domain.services.product_service import ProductService
 from stocklock.domain.services.reservation_service import ReservationService
 from stocklock.infrastructure.clock import PostgresClock
+from stocklock.infrastructure.healthchecks.postgres import PostgresHealthCheck
 from stocklock.infrastructure.repositories.confirmation_repository import ConfirmationRepository
 from stocklock.infrastructure.repositories.product_repository import ProductRepository
 from stocklock.infrastructure.repositories.reservation_repository import ReservationRepository
 from stocklock.infrastructure.session_manager import SessionManager
 from stocklock.infrastructure.uow import SqlAlchemyUnitOfWork
-from stocklock.project.configs.database import DatabaseSettings
 from stocklock.project.configs.admin import AdminSettings
+from stocklock.project.configs.database import DatabaseSettings
 from stocklock.project.configs.time_policy import TimePolicySettings
 
 
@@ -229,6 +232,16 @@ def get_confirmation_use_case(
   return GetConfirmationUseCase(uow, reservations, confirmations)
 
 
+@injectable(lifetime="scoped", as_type=IHealthCheck)
+def postgres_healthcheck_use_case(manager: SessionManager) -> IHealthCheck:
+  return PostgresHealthCheck(manager)
+
+
+@injectable(lifetime="scoped")
+def healthcheck_use_case(checks: Sequence[IHealthCheck]) -> HealthCheck:
+  return HealthCheck(checks)
+
+
 @injectable(lifetime="singleton")
 async def database_engine(settings: DatabaseSettings) -> AsyncIterator[AsyncEngine]:
   engine = create_async_engine(settings.STOCKLOCK_DATABASE_URL.get_secret_value(), pool_pre_ping=True)
@@ -244,7 +257,7 @@ def database_session_maker(engine: AsyncEngine) -> async_sessionmaker[AsyncSessi
   return async_sessionmaker(engine, expire_on_commit=False)
 
 
-@injectable(lifetime="scoped")
+@injectable(lifetime="singleton")
 def session_manager(session_maker: async_sessionmaker[AsyncSession]) -> SessionManager:
   return SessionManager(session_maker)
 
@@ -291,6 +304,8 @@ def create_container(
       product_cleanup_policy,
       cleanup_products_use_case,
       cleanup_retention_use_case,
+      postgres_healthcheck_use_case,
+      healthcheck_use_case,
       session_manager,
       clock,
       unit_of_work,

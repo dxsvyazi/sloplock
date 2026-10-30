@@ -2,11 +2,12 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
+from stocklock.application.ports.uow import IUnitOfWork
 from stocklock.infrastructure.session_manager import SessionManager
 
 
 @dataclass(slots=True, frozen=True)
-class SqlAlchemyUnitOfWork:
+class SqlAlchemyUnitOfWork(IUnitOfWork):
   session_manager: SessionManager
 
   @asynccontextmanager

@@ -229,7 +229,7 @@ async def test_failed_requests_use_real_workflows_and_central_error_handlers(api
   assert not store.active
 
 
-async def test_container_scopes_share_graph_and_isolate_managers():
+async def test_container_scopes_isolate_use_cases_and_share_session_manager():
   from stocklock.project.container import create_container
 
   container = create_container(session_maker=async_sessionmaker())
@@ -241,7 +241,12 @@ async def test_container_scopes_share_graph_and_isolate_managers():
       assert flow.uow.session_manager is manager
       assert flow.products.products.session_manager is manager
       assert flow.reservations.reservations.session_manager is manager
-      assert await second.get(SessionManager) is not manager
+      assert await second.get(SessionManager) is manager
+      second_flow = await second.get(ReserveProductUseCase)
+      assert second_flow is not flow
+      assert second_flow.uow.session_manager is manager
+      assert second_flow.products.products.session_manager is manager
+      assert second_flow.reservations.reservations.session_manager is manager
   finally:
     await container.close()
 
@@ -272,7 +277,7 @@ async def test_owned_engine_is_disposed_when_app_shuts_down(monkeypatch):
 async def test_openapi_includes_every_route_and_hides_injected_usecases(api):
   app, _ = api
   schema = app.openapi()
-  assert len(schema["paths"]) == 10
+  assert len(schema["paths"]) == 11
   for path in schema["paths"].values():
     for operation in path.values():
       assert all(parameter["name"] != "usecase" for parameter in operation.get("parameters", []))
