@@ -29,3 +29,9 @@ service-up:
 
 format:
 	uv run ruff check --fix --select I
+
+test:
+	uv run pytest
+
+test-full:
+	uv run --env-file .env sh -c 'STOCKLOCK_TEST_DATABASE_URL="$$STOCKLOCK_DATABASE_URL" uv run --no-sync pytest -ra'
