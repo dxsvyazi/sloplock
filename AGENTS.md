@@ -6,10 +6,12 @@ StockLock is a monolithic inventory and time-limited reservation service with a
 hexagonal architecture. Keep business rules independent of HTTP, persistence,
 and dependency injection frameworks.
 
-This document describes required behavior and development conventions, not a
-claim that all features are implemented. The current repository contains domain
-entities, repository interfaces, ORM models, configuration, and an application
-bootstrap; several service, adapter, and application files are still scaffolding.
+The repository implements product management, atomic reservations, confirmations,
+expiration, historical retention, soft/hard deletion, product cleanup, and a
+database readiness endpoint. Domain entities, use cases, HTTP adapters,
+PostgreSQL repositories, migrations, and worker CLIs have test coverage. Verify
+the relevant implementation and checks rather than assuming a module is scaffolding.
+See README.md for setup, configuration, command equivalents, and current API behavior.
 
 ## Functional requirements
 
@@ -97,29 +99,47 @@ bootstrap; several service, adapter, and application files are still scaffolding
 
 ## HTTP API contract
 
-Paths below are the requested resource paths. Keep any version prefix consistent
-with the API router configuration.
+Paths below are relative to the implemented `/api/v1` prefix. Interactive docs
+are at `/api/docs`; OpenAPI is at `/openapi.json`. Keep these consistent with the
+router and application factory.
 
 | Method | Path | Behavior |
 | --- | --- | --- |
+| GET | `/healthcheck` | Database readiness: 200 with true, or 503; no caching. |
 | POST | `/products` | Create a product with an initial stock quantity. |
 | GET | `/products` | List products and their current available stock. |
 | GET | `/products/{product_id}` | Retrieve product details and available stock; admins may include deleted products. |
 | DELETE | `/products/{product_id}` | Admin deletion with `mode=soft` (default) or explicit `mode=hard`; active holds block hard deletion only. |
+| PATCH | `/products/{product_id}` | Patch name and/or SKU; reject empty patches and explicit null. |
 | PATCH | `/products/{product_id}/stock` | Adjust available stock for an administrative inventory correction. |
 | GET | `/products/{product_id}/reservations` | List a product's reservations, optionally filtered by status. |
 | POST | `/products/{product_id}/reservations` | Atomically reserve a requested quantity for a limited time. |
 | GET | `/reservations/{reservation_id}` | Retrieve status, quantity, and expiration time. |
 | POST | `/reservations/{reservation_id}/cancel` | Cancel an active reservation and return its stock. |
 | GET | `/reservations` | List reservations, optionally filtered by status. |
+| POST | `/reservations/{reservation_id}/expire` | Expire a due active hold and return its stock atomically. |
 | POST | `/reservations/{reservation_id}/confirm` | Confirm an active reservation before expiration. |
 | GET | `/reservations/{reservation_id}/confirmation` | Retrieve the confirmation result, if available. |
 
-Editing product details is a functional requirement, but its endpoint is not yet
-specified. Do not treat the stock correction endpoint as a general product edit.
-Request/response schemas, error codes, reservation lifetime policy, and whether
-stock corrections use an absolute quantity or a delta also require explicit API
-decisions when implemented.
+Current API decisions:
+
+- Stock correction sets an absolute `stock_quantity`, not a delta. Reject a
+  correction when available stock plus all stored active holds exceeds the stock
+  integer limit; overdue active holds still require capacity for stock returns.
+- Reservation creation accepts `quantity` and a product-scoped, case-sensitive
+  `key`. Matching quantity retries return the original reservation without
+  extending its deadline; incompatible retries conflict. Preserve the key rules
+  documented in README.md and enforced by domain validation.
+- Lifetime is server-configured by `RESERVATION_LIFETIME_SECONDS` (default 900).
+  Database UTC wall time is authoritative. Reads expose stored lifecycle status;
+  confirmation must independently enforce expiry before cleanup.
+- Lists use ascending UUID cursors (`start_id`) and `limit` (default 50, max 100).
+  Reservation lists accept status and product visibility filters.
+- Bearer authentication currently guards deletion and administrative visibility
+  only. Product creation, detail edits, stock corrections, and reservation and
+  confirmation operations do not require it. Do not imply broader protection.
+- Missing/hidden resources return 404, business conflicts 409, validation errors
+  422, invalid admin credentials 401, and disabled admin operations 503.
 
 ## Architecture and current folder structure
 
@@ -134,13 +154,17 @@ stocklock/
   application/
     commands/                        # Application input models
     usecases/                        # Workflow orchestration and transaction boundaries
+    ports/                           # Unit of work, clock, health-check interfaces
+    policies/                        # Lifetime and cleanup policies
   domain/
     entities/                        # Product, Reservation, Confirmation
     services/                        # Domain rules spanning entities
+    value_objects/                   # Validated domain values
     ports/repositories/              # Repository abstractions
   infrastructure/
     models/                          # SQLAlchemy ORM models
     repositories/                    # Persistence adapters implementing domain ports
+    workers/                         # Separate expiration, retention, product cleanup CLIs
   project/configs/                   # Service configuration
   shared/                            # Shared primitives, enums, and utilities
     sqlalchemy/                      # Persistence-specific shared helpers
@@ -181,6 +205,15 @@ migrations/                          # Alembic migration environment and revisio
   when a multi-step operation fails.
 - Keep domain rule tests independent of web and database frameworks. Exercise HTTP
   validation and response behavior at the API boundary when implementing endpoints.
-- Do not assume scaffolded modules or missing test tooling are operational. Report
-  the checks actually run and any relevant gaps.
+- Keep README raw commands and makefile targets equivalent when changing developer
+  workflows. `make env` must preserve existing local configuration; the default
+  target must be help. Preserve existing target aliases when practical.
+- Run `uv run ruff check .` and `uv run pytest -q` for relevant changes. PostgreSQL
+  tests require an exported `STOCKLOCK_TEST_DATABASE_URL` with schema creation
+  permission; they use isolated schemas and skip without it. `make test-full`
+  requires this explicit URL and must not implicitly reuse application credentials.
+- The API does not start workers. Compose starts all three after migrations.
+  Local `main.py` and container `bootstrap.sh` have different listener/reload
+  settings; document the actual entrypoint behavior when changing either.
+- Report the checks actually run and any relevant gaps, including skipped races.
 - Keep credentials and local environment secrets out of documentation and commits.
