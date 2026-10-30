@@ -3,7 +3,7 @@
 from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from uuid import UUID
 
@@ -15,7 +15,7 @@ from stocklock.domain.ports.repositories.confirmation_repository import IConfirm
 from stocklock.domain.ports.repositories.product_repository import IProductRepository, ProductDetailField
 from stocklock.domain.ports.repositories.reservation_repository import IReservationRepository
 from stocklock.domain.validation import require_type
-from stocklock.domain.value_objects.product import StockDelta
+from stocklock.domain.value_objects.product import StockDelta, StockQuantity
 from stocklock.domain.value_objects.reservation import IdempotencyKey
 from stocklock.shared.constraints import MAX_STOCK_QUANTITY
 from stocklock.shared.enums import ProductVisibility, ReservationStatus
@@ -134,9 +134,13 @@ class Products(IProductRepository):
     self.store.check("adjust_stock")
     if (product := self.store.products.get(id)) is None:
       return None
-    if not 0 <= product.stock_quantity.value + delta.value <= MAX_STOCK_QUANTITY:
+    if product.deleted_at is not None and delta.value <= 0:
       return None
-    product.adjust_stock(delta)
+    quantity = product.stock_quantity.value + delta.value
+    if not 0 <= quantity <= MAX_STOCK_QUANTITY:
+      return None
+    product = replace(product, stock_quantity=StockQuantity(quantity), updated_at=utc_now())
+    self.store.products[id] = product
     return deepcopy(product)
 
 

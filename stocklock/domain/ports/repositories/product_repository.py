@@ -49,7 +49,7 @@ class IProductRepository(ABC):
 
   @abstractmethod
   async def save_deletion(self, product: Product) -> None:
-    """Persist deletion timestamp; caller holds product lock and checked active holds."""
+    """Persist deletion timestamp; caller holds product lock. Active holds may remain."""
     ...
 
   @abstractmethod
@@ -85,5 +85,9 @@ class IProductRepository(ABC):
 
   @abstractmethod
   async def adjust_stock(self, id: UUID, delta: StockDelta) -> Product | None:
-    """Atomically apply a delta; return None if missing or outside the stock range."""
+    """Atomically apply a delta; return None if missing or outside the stock range.
+
+    Positive lifecycle returns allow deleted products; nonpositive deltas require
+    visible products. Administrative corrections use save_stock instead.
+    """
     ...

@@ -101,11 +101,14 @@ class ProductRepository(SessionRepository, IProductRepository):
 
   async def adjust_stock(self, id: UUID, delta: StockDelta) -> Product | None:
     change = delta.value
+    # Existing holds must return stock after soft deletion. New holds still
+    # require visibility, including at the atomic decrement boundary.
+    visibility = () if change > 0 else (ProductORM.deleted_at.is_(None),)
 
     return await self._update(
       id,
       {"stock_quantity": ProductORM.stock_quantity + change, "updated_at": func.clock_timestamp()},
-      ProductORM.deleted_at.is_(None),
+      *visibility,
       ProductORM.stock_quantity >= -change,
       # A decrement's mathematical upper bound exceeds int32; valid stock is
       # already bounded by the schema, and asyncpg must receive an int32 value.

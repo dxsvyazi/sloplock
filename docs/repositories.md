@@ -172,15 +172,17 @@ both positive and negative adjustments.
 `ProductRepository.find_by_id` returns the full entity, including `deleted_at`;
 the domain service enforces caller visibility. Product lists apply visibility
 before cursor pagination. Reservation visibility filtering joins products before
-status/cursor limiting. Product stock and detail writes exclude deleted records.
+status/cursor limiting. Administrative stock and detail writes exclude deleted
+records. Atomic positive stock deltas permit lifecycle returns to deleted products;
+nonpositive deltas require visible products.
 
-Deletion locks the product first, then reads active holds without reservation row
-locks. This serializes with new reservations without reversing cancellation and
-expiration's reservation-then-product order. An uncommitted terminal transition
-is conservatively observed as active; deletion returns a conflict and can be
-retried after commit. `save_deletion` and `hard_delete` require the caller's
-product lock and active-hold check. Hard deletion cascades through reservations
-to confirmations atomically; explicit erasure overrides retention.
+Deletion locks the product first. Hard deletion then reads active holds without
+reservation row locks; soft deletion permits existing holds. This serializes with
+new reservations without reversing cancellation and expiration's reservation-then-product
+order. An uncommitted terminal transition is conservatively observed as active;
+hard deletion returns a conflict and can be retried after commit. `save_deletion`
+requires the caller's product lock; `hard_delete` also requires the active-hold
+check. Hard deletion cascades through reservations to confirmations atomically; explicit erasure overrides retention.
 
 `purge_deleted` locks at most the supplied batch size using `SKIP LOCKED`, selects
 only products with `deleted_at` at or before cutoff and no reservations, and

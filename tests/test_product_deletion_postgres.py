@@ -99,11 +99,15 @@ async def test_product_lock_serializes_deletion_with_new_reservation(database, m
     release.set()
     winner, loser = await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), 5)
     assert not isinstance(winner, Exception)
-    assert isinstance(loser, ProductNotFound if first == "delete" else ProductHasActiveReservations)
+    if first == "reserve" and mode is DeletionMode.soft:
+      assert loser is None
+    else:
+      assert isinstance(loser, ProductNotFound if first == "delete" else ProductHasActiveReservations)
     async with database.uow.begin():
       row = await ProductRepository(database.manager).find_by_id(product.id)
       if first == "reserve":
-        assert row.deleted_at is None and row.stock_quantity.value == 5
+        assert (row.deleted_at is not None) == (mode is DeletionMode.soft)
+        assert row.stock_quantity.value == 5
       elif mode is DeletionMode.soft:
         assert row.deleted_at is not None and row.stock_quantity.value == 7
       else:
@@ -119,13 +123,14 @@ async def test_product_lock_serializes_deletion_with_new_reservation(database, m
     await container.close()
 
 
-@pytest.mark.parametrize("mode", list(DeletionMode))
-async def test_hard_and_soft_reject_active_without_stock_side_effects(database, mode):
+async def test_hard_rejects_active_without_stock_side_effects(database):
   product, [reservation] = await seed(database, (ReservationStatus.active,))
   container = container_for(database)
   try:
     with pytest.raises(ProductHasActiveReservations):
-      await execute(container, DeleteProductUseCase, DeleteProductCommand(product_id=product.id, mode=mode))
+      await execute(
+        container, DeleteProductUseCase, DeleteProductCommand(product_id=product.id, mode=DeletionMode.hard)
+      )
     current = await execute(container, GetProductUseCase, GetProductCommand(product_id=product.id))
     assert current.stock_quantity == product.stock_quantity and current.deleted_at is None
     assert await remaining(database) == ({reservation.id}, set())
@@ -182,7 +187,7 @@ async def test_real_http_deletion_lifecycle(database):
 
 @pytest.mark.parametrize("mode", list(DeletionMode))
 @pytest.mark.parametrize("transition", ["confirm", "cancel", "expire"])
-async def test_deletion_rejects_uncommitted_terminal_transition_without_deadlock(
+async def test_deletion_coordinates_with_uncommitted_terminal_transition_without_deadlock(
   database, monkeypatch, mode, transition
 ):
   from stocklock.application.commands.reservation import CancelReservationCommand, ExpireReservationCommand
@@ -203,6 +208,7 @@ async def test_deletion_rejects_uncommitted_terminal_transition_without_deadlock
   container = container_for(database)
   product_locked, transitioned, checked = asyncio.Event(), asyncio.Event(), asyncio.Event()
   original_read = ProductRepository.active_held_quantity
+  original_find = ProductRepository.find_by_id
   original_transition = ReservationRepository.save_transition
 
   async def wait_for_transition(self, id):
@@ -219,7 +225,18 @@ async def test_deletion_rejects_uncommitted_terminal_transition_without_deadlock
     await checked.wait()
     return result
 
-  monkeypatch.setattr(ProductRepository, "active_held_quantity", wait_for_transition)
+  async def wait_after_product_lock(self, id, *, for_update=False):
+    result = await original_find(self, id, for_update=for_update)
+    if id == product.id and for_update:
+      product_locked.set()
+      await transitioned.wait()
+      checked.set()
+    return result
+
+  if mode is DeletionMode.hard:
+    monkeypatch.setattr(ProductRepository, "active_held_quantity", wait_for_transition)
+  else:
+    monkeypatch.setattr(ProductRepository, "find_by_id", wait_after_product_lock)
   monkeypatch.setattr(ReservationRepository, "save_transition", pause_transition)
   terminal_usecase, command = {
     "confirm": (ConfirmReservationUseCase, ConfirmReservationCommand(reservation_id=reservation.id)),
@@ -236,9 +253,15 @@ async def test_deletion_rejects_uncommitted_terminal_transition_without_deadlock
     await asyncio.wait_for(product_locked.wait(), 1)
     tasks.append(asyncio.create_task(execute(container, terminal_usecase, command)))
     deletion, terminal = await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), 5)
-    assert isinstance(deletion, ProductHasActiveReservations)
+    if mode is DeletionMode.hard:
+      assert isinstance(deletion, ProductHasActiveReservations)
+    else:
+      assert deletion is None
     assert not isinstance(terminal, Exception)
-    current = await execute(container, GetProductUseCase, GetProductCommand(product_id=product.id))
+    current = await execute(
+      container, GetProductUseCase, GetProductCommand(product_id=product.id, include_deleted=True)
+    )
+    assert (current.deleted_at is not None) == (mode is DeletionMode.soft)
     assert current.stock_quantity.value == (7 if transition == "confirm" else 8)
     await execute(container, DeleteProductUseCase, DeleteProductCommand(product_id=product.id, mode=mode))
   finally:
@@ -357,5 +380,148 @@ async def test_hard_deletion_racing_product_cleanup_is_safe(database):
     assert erased is None or isinstance(erased, ProductNotFound)
     with pytest.raises(ProductNotFound):
       await execute(container, GetProductUseCase, GetProductCommand(product_id=product.id, include_deleted=True))
+  finally:
+    await container.close()
+
+
+@pytest.mark.parametrize("transition", ["confirm", "cancel", "expire", "bulk_expire", "worker_expire"])
+async def test_active_reservations_finish_after_soft_deletion(database, transition):
+  from datetime import timedelta
+  from sqlalchemy import update, func
+  from stocklock.application.commands.reservation import (
+    CancelReservationCommand,
+    ExpireReservationCommand,
+    ExpireReservationsCommand,
+  )
+  from stocklock.application.usecases.reservation import CancelReservationUseCase, ExpireReservationUseCase
+  from stocklock.application.usecases.expiration import ExpireReservationsUseCase
+  from stocklock.infrastructure.models.reservation import ReservationORM
+  from stocklock.infrastructure.repositories.reservation_repository import ReservationRepository
+  from stocklock.domain.errors import ReservationUnavailable
+  from stocklock.domain.value_objects.product import StockDelta
+
+  product, [reservation] = await seed(database, (ReservationStatus.active,))
+  if transition in ("expire", "bulk_expire", "worker_expire"):
+    async with database.uow.begin():
+      await database.manager.get_session().execute(
+        update(ReservationORM)
+        .where(ReservationORM.id == reservation.id)
+        .values(expires_at=func.clock_timestamp() - timedelta(days=1))
+      )
+  container = container_for(database)
+  try:
+    await execute(container, DeleteProductUseCase, DeleteProductCommand(product_id=product.id))
+    with pytest.raises(ProductHasActiveReservations):
+      await execute(
+        container, DeleteProductUseCase, DeleteProductCommand(product_id=product.id, mode=DeletionMode.hard)
+      )
+    with pytest.raises(ProductNotFound):
+      await execute(
+        container, ReserveProductUseCase, CreateReservationCommand(product_id=product.id, quantity=1, key="new")
+      )
+    operation = {
+      "confirm": (ConfirmReservationUseCase, ConfirmReservationCommand(reservation_id=reservation.id)),
+      "cancel": (CancelReservationUseCase, CancelReservationCommand(reservation_id=reservation.id)),
+      "expire": (ExpireReservationUseCase, ExpireReservationCommand(reservation_id=reservation.id)),
+      "bulk_expire": (ExpireReservationsUseCase, ExpireReservationsCommand(reservation_ids=(reservation.id,))),
+      "worker_expire": (ExpireReservationsUseCase, ExpireReservationsCommand(reservation_ids=(reservation.id,))),
+    }[transition]
+    if transition == "worker_expire":
+      from stocklock.infrastructure.workers.expiration import ExpirationWorker
+
+      await ExpirationWorker(container, timedelta(seconds=1)).run_once()
+    else:
+      result = await execute(container, *operation)
+    if transition == "confirm":
+      assert await execute(container, *operation) == result
+    elif transition == "bulk_expire":
+      assert result == [reservation.id]
+      assert await execute(container, *operation) == []
+    elif transition != "worker_expire":
+      with pytest.raises(ReservationUnavailable):
+        await execute(container, *operation)
+    current = await execute(
+      container, GetProductUseCase, GetProductCommand(product_id=product.id, include_deleted=True)
+    )
+    assert current.deleted_at is not None
+    assert current.stock_quantity.value == (7 if transition == "confirm" else 8)
+    async with database.uow.begin():
+      saved = await ReservationRepository(database.manager).find_by_id(reservation.id)
+      assert (
+        saved.status
+        is {
+          "confirm": ReservationStatus.confirmed,
+          "cancel": ReservationStatus.cancelled,
+          "expire": ReservationStatus.expired,
+          "bulk_expire": ReservationStatus.expired,
+          "worker_expire": ReservationStatus.expired,
+        }[transition]
+      )
+      assert (await database.manager.get_session().get(ReservationORM, reservation.id)).finalized_at is not None
+      assert await ProductRepository(database.manager).adjust_stock(product.id, StockDelta(-1)) is None
+    await execute(container, DeleteProductUseCase, DeleteProductCommand(product_id=product.id, mode=DeletionMode.hard))
+    assert await remaining(database) == (set(), set())
+  finally:
+    await container.close()
+
+
+async def test_real_http_soft_deletion_with_active_hold(database):
+  from stocklock.bootstrap import create_app
+
+  product, [reservation] = await seed(database, (ReservationStatus.active,))
+  app = create_app(container=container_for(database))
+  headers = {"Authorization": "Bearer test-secret"}
+  async with app.router.lifespan_context(app):
+    path = f"/products/{product.id}"
+    assert await request(app, "DELETE", path, headers=headers) == (204, None)
+    assert (await request(app, "DELETE", path, query={"mode": "hard"}, headers=headers))[0] == 409
+    assert (await request(app, "POST", path + "/reservations", body={"quantity": 1, "key": "new"}))[0] == 404
+    assert (await request(app, "GET", f"/reservations/{reservation.id}"))[1]["status"] == "active"
+    assert (await request(app, "POST", f"/reservations/{reservation.id}/cancel"))[0] == 200
+    assert await request(app, "DELETE", path, query={"mode": "hard"}, headers=headers) == (204, None)
+
+
+@pytest.mark.parametrize("bulk", [False, True])
+async def test_failed_stock_return_after_soft_deletion_rolls_back(database, monkeypatch, bulk):
+  from datetime import timedelta
+  from sqlalchemy import update, func
+  from stocklock.application.commands.reservation import CancelReservationCommand, ExpireReservationsCommand
+  from stocklock.application.usecases.reservation import CancelReservationUseCase
+  from stocklock.application.usecases.expiration import ExpireReservationsUseCase
+  from stocklock.infrastructure.models.reservation import ReservationORM
+  from stocklock.infrastructure.repositories.reservation_repository import ReservationRepository
+
+  product, [reservation] = await seed(database, (ReservationStatus.active,))
+  if bulk:
+    async with database.uow.begin():
+      await database.manager.get_session().execute(
+        update(ReservationORM)
+        .where(ReservationORM.id == reservation.id)
+        .values(expires_at=func.clock_timestamp() - timedelta(days=1))
+      )
+  container = container_for(database)
+  original = ProductRepository.adjust_stock
+
+  async def fail_after_return(self, id, delta):
+    result = await original(self, id, delta)
+    assert result is not None
+    raise RuntimeError("injected failure after stock return")
+
+  try:
+    await execute(container, DeleteProductUseCase, DeleteProductCommand(product_id=product.id))
+    monkeypatch.setattr(ProductRepository, "adjust_stock", fail_after_return)
+    operation = (
+      (ExpireReservationsUseCase, ExpireReservationsCommand(reservation_ids=(reservation.id,)))
+      if bulk
+      else (CancelReservationUseCase, CancelReservationCommand(reservation_id=reservation.id))
+    )
+    with pytest.raises(RuntimeError, match="injected failure"):
+      await execute(container, *operation)
+    async with database.uow.begin():
+      saved = await ReservationRepository(database.manager).find_by_id(reservation.id)
+      assert saved.status is ReservationStatus.active
+      assert (await database.manager.get_session().get(ReservationORM, reservation.id)).finalized_at is None
+      current = await ProductRepository(database.manager).find_by_id(product.id)
+      assert current.deleted_at is not None and current.stock_quantity.value == 7
   finally:
     await container.close()

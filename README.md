@@ -124,16 +124,19 @@ credential, with no user accounts or role management.
 
 `DELETE /api/v1/products/{product_id}` soft-deletes by default. Add `?mode=hard`
 for explicit, irreversible erasure of the product and its reservations and
-confirmations, regardless of their retention settings. Both modes reject any
+confirmations, regardless of their retention settings. Hard deletion rejects any
 stored active reservations with HTTP 409, including overdue holds awaiting normal
-expiration. Successful deletion returns an empty HTTP 204. Unknown products return
-404. Repeating soft deletion preserves its timestamp and returns 204; repeating
+expiration. Soft deletion is allowed even with active reservations. Successful
+deletion returns an empty HTTP 204. Unknown products return 404. Repeating soft deletion preserves its timestamp and returns 204; repeating
 hard deletion returns 404.
 
 Soft-deleted products cannot be edited, have stock corrected, or receive new
 reservations (including reservation-creation retries). Those operations and normal
 product detail requests return 404. Reservation and confirmation history remains
 accessible, and successful confirmation retries still return the original result.
+Existing active holds may confirm before expiry, cancel, or expire normally.
+Cancellation and expiration return held stock atomically to the hidden product;
+this does not make it available for new reservations.
 Hard deletion makes all those historical lookups and confirmation retries return
 404. Deletion does not cancel reservations or adjust stock.
 

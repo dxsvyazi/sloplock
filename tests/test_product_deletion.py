@@ -70,9 +70,8 @@ async def test_soft_deletion_hides_product_and_preserves_timestamp():
     await reserve.execute(CreateReservationCommand(product_id=product.id, quantity=1, key="retry"))
 
 
-@pytest.mark.parametrize("mode", list(DeletionMode))
 @pytest.mark.parametrize("overdue", [False, True])
-async def test_stored_active_hold_blocks_both_modes(mode, overdue):
+async def test_stored_active_hold_blocks_hard_deletion(overdue):
   store, product, _, delete = setup()
   created = store.now - timedelta(days=2) if overdue else store.now
   reservation = Reservation.create(
@@ -84,7 +83,7 @@ async def test_stored_active_hold_blocks_both_modes(mode, overdue):
   )
   store.reservations[reservation.id] = reservation
   with pytest.raises(ProductHasActiveReservations):
-    await delete.execute(DeleteProductCommand(product_id=product.id, mode=mode))
+    await delete.execute(DeleteProductCommand(product_id=product.id, mode=DeletionMode.hard))
   assert store.products[product.id].deleted_at is None
   assert store.products[product.id].stock_quantity.value == 10
 
@@ -134,3 +133,45 @@ def test_deleted_domain_product_cannot_be_edited(operation):
       product.correct_stock(StockQuantity(5))
     else:
       product.adjust_stock(StockDelta(1))
+
+
+@pytest.mark.parametrize("overdue", [False, True])
+async def test_soft_deletion_preserves_active_holds_and_blocks_hard_deletion(overdue):
+  store, product, _, delete = setup()
+  created = store.now - timedelta(days=2) if overdue else store.now
+  reservation = Reservation.create(
+    product_id=product.id,
+    quantity=1,
+    key="hold",
+    created_at=created,
+    expires_at=created + timedelta(days=1),
+  )
+  store.reservations[reservation.id] = reservation
+  await delete.execute(DeleteProductCommand(product_id=product.id))
+  assert store.products[product.id].deleted_at == store.now
+  assert store.products[product.id].stock_quantity.value == 10
+  assert store.reservations[reservation.id] == reservation
+  with pytest.raises(ProductHasActiveReservations):
+    await delete.execute(DeleteProductCommand(product_id=product.id, mode=DeletionMode.hard))
+
+
+async def test_cancellation_returns_stock_after_soft_deletion():
+  from stocklock.application.commands.reservation import CancelReservationCommand
+  from stocklock.application.usecases.reservation import CancelReservationUseCase
+
+  store, product, products, delete = setup()
+  reservations = ReservationService(Reservations(store))
+  reserve = ReserveProductUseCase(
+    store,
+    products,
+    reservations,
+    ReservationTimePolicy(lifetime=timedelta(minutes=5)),
+    Clock(store),
+  )
+  hold = await reserve.execute(CreateReservationCommand(product_id=product.id, quantity=2, key="hold"))
+  await delete.execute(DeleteProductCommand(product_id=product.id))
+  await CancelReservationUseCase(store, products, reservations).execute(
+    CancelReservationCommand(reservation_id=hold.id)
+  )
+  assert store.products[product.id].stock_quantity.value == 10
+  assert store.products[product.id].deleted_at is not None

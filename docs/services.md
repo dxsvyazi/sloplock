@@ -243,7 +243,8 @@ command construction. Invalid execution rolls back its transaction.
 ## Product deletion
 
 `DeleteProductUseCase` locks the product in its application transaction, then
-`ProductService.delete` checks stored active-held quantity in a separate query.
+`ProductService.delete` checks stored active-held quantity in a separate query
+only for hard deletion. Soft deletion permits active holds, including overdue ones.
 Soft deletion uses an aware database-clock UTC timestamp and persists `deleted_at`
 and `updated_at` once. Deleted entities reject edits; ordinary product service
 lookups exclude them. The delete use case deliberately includes deleted products
@@ -251,7 +252,10 @@ so a soft deletion retry is idempotent and hard deletion can erase hidden record
 
 Hard deletion is an explicitly authenticated history-erasure operation. It uses
 database cascades, with no stock changes; any failure rolls back the entire
-cascade. Both modes reject overdue active holds until normal expiration commits.
+cascade. Hard deletion rejects overdue active holds until normal expiration commits.
+Existing holds on soft-deleted products may confirm before expiry, cancel, or
+expire normally; lifecycle stock returns allow hidden products without reopening
+them for reservation creation or administrative corrections.
 `GetProductUseCase` permits explicit administrative inclusion, product listing
 supports visibility filters, and reservation listing preserves all history by
 default. Product-scoped reservation lists include deleted products so history

@@ -58,10 +58,10 @@ class ProductService:
   async def delete(self, product: Product, *, mode: DeletionMode, at: datetime) -> None:
     require_type(mode, DeletionMode)
 
-    if await self.products.active_held_quantity(product.id):
-      raise ProductHasActiveReservations
-
     if mode is DeletionMode.hard:
+      if await self.products.active_held_quantity(product.id):
+        raise ProductHasActiveReservations
+
       return await self.products.hard_delete(product.id)
 
     if product.deleted_at is None:

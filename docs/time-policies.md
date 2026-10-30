@@ -128,8 +128,9 @@ Product cleanup waits until no reservations remain, regardless of age. Existing
 reservation retention remains in effect for visible and deleted products alike;
 indefinitely retained history prevents automatic product removal. Explicit admin
 hard deletion is the intentional exception and erases terminal history immediately.
-Both administrative deletion modes reject stored active holds, including overdue
-holds; product cleanup never expires or cancels holds implicitly.
+Hard deletion rejects stored active holds, including overdue holds. Soft deletion
+permits those holds to complete normally; cancellation and expiration still return
+stock to the hidden product. Product cleanup never expires or cancels holds implicitly.
 
 All three workers derive from `BaseWorker`, which validates common limits,
 declares `_run_once`, and provides stop-aware `run_once` and `run`. Failed sweeps
