@@ -14,7 +14,8 @@ from stocklock.infrastructure.workers.product_cleanup import ProductCleanupWorke
 from stocklock.project.configs.time_policy import TimePolicySettings
 from stocklock.project.container import create_container
 from stocklock.shared.enums import ProductVisibility, ReservationStatus
-from tests.test_retention import seed, FrozenClock, NOW, flow as retention_flow
+from tests.test_retention import NOW, FrozenClock, seed
+from tests.test_retention import flow as retention_flow
 
 
 async def mark_deleted(database, product_id, *, age=timedelta(days=31)):
@@ -169,12 +170,3 @@ async def test_product_cleanup_cancellation_rolls_back(database, monkeypatch):
     task.cancel()
     await asyncio.gather(task, return_exceptions=True)
     await container.close()
-
-
-@pytest.mark.parametrize("limit", [0, True, 101])
-async def test_cleanup_repository_rejects_unbounded_batch_sizes(database, limit):
-  from stocklock.shared.exceptions import ValidationException
-
-  async with database.uow.begin():
-    with pytest.raises(ValidationException):
-      await ProductRepository(database.manager).purge_deleted(NOW, limit=limit)

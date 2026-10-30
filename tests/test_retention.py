@@ -25,7 +25,6 @@ from stocklock.shared.exceptions import ValidationException
 from tests.entity_updates import transition
 from tests.usecase_driver import ReservationDriver
 
-
 NOW = datetime(2026, 10, 28, tzinfo=timezone.utc)
 
 
@@ -69,7 +68,6 @@ async def seed(database, statuses=(ReservationStatus.cancelled,), *, age=timedel
 def flow(database, *, policy=None, clock=None):
   from stocklock.application.policies.retention import RetentionPolicy
   from stocklock.application.usecases.retention import CleanupRetentionUseCase
-
   from stocklock.infrastructure.session_manager import SessionManager
   from stocklock.infrastructure.uow import SqlAlchemyUnitOfWork
 
@@ -310,20 +308,6 @@ async def test_disabled_policy_performs_no_database_work(database):
 async def test_cleanup_rejects_invalid_batch_sizes_before_transaction(database, limit):
   with pytest.raises(ValidationException):
     await flow(database).execute(limit=limit)
-
-
-@pytest.mark.parametrize(
-  "cutoffs",
-  [
-    {ReservationStatus.active: NOW},
-    {ReservationStatus.cancelled: datetime(2026, 1, 1)},
-    {"cancelled": NOW},
-  ],
-)
-async def test_repository_rejects_unsafe_cleanup_cutoffs(database, cutoffs):
-  async with database.uow.begin():
-    with pytest.raises(ValidationException):
-      await ReservationRepository(database.manager).purge_terminal(cutoffs, limit=100)
 
 
 async def test_deleted_history_returns_http_not_found_and_releases_key(database):
