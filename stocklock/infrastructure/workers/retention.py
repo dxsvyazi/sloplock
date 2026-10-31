@@ -39,7 +39,7 @@ async def main() -> None:
   container = create_container()
   stop = asyncio.Event()
   loop = asyncio.get_running_loop()
-  registered_signals = []
+  registered_signals = (signal.SIGINT, signal.SIGTERM)
 
   try:
     policy = await container.get(RetentionPolicy)
@@ -48,9 +48,8 @@ async def main() -> None:
       logger.info("Retention cleanup disabled; keeping all history indefinitely")
       return
 
-    for signum in (signal.SIGINT, signal.SIGTERM):
+    for signum in registered_signals:
       loop.add_signal_handler(signum, stop.set)
-      registered_signals.append(signum)
 
     settings = await container.get(TimePolicySettings)
 

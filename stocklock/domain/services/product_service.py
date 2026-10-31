@@ -1,3 +1,4 @@
+from collections import defaultdict
 from dataclasses import dataclass, replace
 from datetime import datetime
 from uuid import UUID
@@ -117,11 +118,13 @@ class ProductService:
 
   async def return_stock_many(self, reservations: "list[Reservation]") -> None:
     """Return transitioned holds once per product, locking products in UUID order."""
-    quantities: dict[UUID, int] = {}
+    quantities: dict[UUID, int] = defaultdict(lambda: 0)
+
     for reservation in reservations:
-      quantities[reservation.product_id] = quantities.get(reservation.product_id, 0) + reservation.quantity.value
+      quantities[reservation.product_id] += reservation.quantity.value
 
     for product_id, quantity in sorted(quantities.items()):
       if quantity > MAX_STOCK_QUANTITY:
         raise StockLimitExceeded
+
       await self.return_stock(product_id, ReservationQuantity(quantity))
