@@ -1,6 +1,7 @@
 name: stocklock
 
 x-application: &application
+  image: stocklock:local
   build:
     dockerfile: dockerfile
     target: dev

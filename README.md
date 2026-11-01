@@ -73,15 +73,18 @@ docker compose --env-file .env -f docker-compose.yml logs -f
 ```
 
 Compose waits for database health, runs migrations, and starts the API and all
-three workers. Stop the local API first to avoid competing for its port. The
-container entrypoint (`bootstrap.sh` → `python -m stocklock.project.server`)
-currently enables reload and reads `PORT` (default `8000`)
-and `WORKERS` (default `1`); it does not use `main.py`'s `SERVICE_RELOAD` setting.
-Keep `SERVICE_PORT=8000` for the default Compose setup. If changing it, also set
-`PORT` to the same value in `.env` so the listener matches the port mapping.
-The `dev` image target installs locked runtime dependencies; use local uv for
-linting and tests. The `prod` target currently relies on uv at container startup
-and uses the same reload-enabled entrypoint; review it before production use.
+three workers. Stop the local API first to avoid competing for its port. The API,
+migration job, and workers share the `stocklock:local` image. Alembic is a runtime
+dependency so the migration job can run without development tools installed.
+Both `dev` and `prod` image targets install locked runtime dependencies during
+the build; container commands use `uv run --no-sync` to preserve that environment
+at startup. Use local uv for linting and tests.
+
+The container entrypoint (`bootstrap.sh` → `python -m main`) uses the same
+`SERVICE_HOST`, `SERVICE_PORT`, `SERVICE_WORKERS`, and `SERVICE_RELOAD` settings as
+the local API. Defaults are `0.0.0.0`, `8000`, `1`, and `false`, respectively.
+The Compose port mapping and health check use `SERVICE_PORT` as well; no separate
+`PORT` setting is needed.
 
 Stop containers when finished (the named database volume is preserved):
 
@@ -509,8 +512,8 @@ Further reading:
   refuses to run without it and does not reuse the application database implicitly.
 - **Admin operations return 503/401:** configure a nonblank token, restart the API,
   and provide the matching bearer credential.
-- **Container API port mismatch:** keep the default `8000`, or align `.env`'s
-  `PORT` and `SERVICE_PORT` as described above.
+- **Container API port mismatch:** set `SERVICE_PORT` in `.env` for both the API
+  listener and Compose port mapping, then recreate the API container.
 - **Reusing PostgreSQL volumes:** PostgreSQL 18 stores its cluster under the volume
   at `/var/lib/postgresql`. Migrate existing clusters before reusing a volume from
   another major version/layout. `down` preserves the volume; removing it destroys

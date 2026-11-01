@@ -1,3 +1,3 @@
 #!/bin/bash
 
-exec uv run python -m main
+exec uv run --no-sync python -m main

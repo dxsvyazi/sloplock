@@ -15,12 +15,10 @@ COPY . .
 
 RUN chmod +x "$PYSETUP_PATH/bootstrap.sh"
 
-FROM base AS dev
-
 RUN uv sync --locked --no-dev
 
 CMD ["/bin/bash", "bootstrap.sh"]
 
-FROM base AS prod
+FROM base AS dev
 
-CMD ["/bin/bash", "bootstrap.sh"]
+FROM base AS prod
