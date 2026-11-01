@@ -7,8 +7,8 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 
-from stocklock.infrastructure.uow import SqlAlchemyUnitOfWork
 from stocklock.infrastructure.session_manager import SessionManager
+from stocklock.infrastructure.uow import SqlAlchemyUnitOfWork
 
 
 @dataclass

@@ -6,7 +6,6 @@ from pydantic import ValidationError
 
 from stocklock.shared.exceptions import ValidationException
 
-
 TIME_FIELDS: tuple[str, ...] = (
   "RESERVATION_LIFETIME_SECONDS",
   "EXPIRATION_CLEANUP_INTERVAL_SECONDS",

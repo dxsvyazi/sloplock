@@ -9,17 +9,21 @@ from stocklock.application.commands.product import (
   UpdateProductCommand,
 )
 from stocklock.application.commands.reservation import CreateReservationCommand, ListReservationsCommand
-from stocklock.application.usecases.product import DeleteProductUseCase, GetProductUseCase, ListProductsUseCase
-from stocklock.application.usecases.product import UpdateProductUseCase
-from stocklock.application.usecases.reservation import ListReservationsUseCase, ReserveProductUseCase
 from stocklock.application.policies.reservation import ReservationTimePolicy
+from stocklock.application.usecases.product import (
+  DeleteProductUseCase,
+  GetProductUseCase,
+  ListProductsUseCase,
+  UpdateProductUseCase,
+)
+from stocklock.application.usecases.reservation import ListReservationsUseCase, ReserveProductUseCase
 from stocklock.domain.entities.product import Product
 from stocklock.domain.entities.reservation import Reservation
 from stocklock.domain.errors import ProductHasActiveReservations, ProductNotFound
 from stocklock.domain.services.product_service import ProductService
 from stocklock.domain.services.reservation_service import ReservationService
 from stocklock.shared.enums import DeletionMode, ProductVisibility
-from tests.service_doubles import Clock, Products, Reservations, Store, PersistenceTestFailure
+from tests.service_doubles import Clock, PersistenceTestFailure, Products, Reservations, Store
 
 
 def setup():
@@ -122,7 +126,7 @@ async def test_deletion_failure_rolls_back(mode, operation):
 
 @pytest.mark.parametrize("operation", ["details", "correction", "delta"])
 def test_deleted_domain_product_cannot_be_edited(operation):
-  from stocklock.domain.value_objects.product import ProductName, StockQuantity, StockDelta
+  from stocklock.domain.value_objects.product import ProductName, StockDelta, StockQuantity
 
   store, product, _, _ = setup()
   product.soft_delete(store.now)

@@ -244,7 +244,9 @@ def healthcheck_use_case(checks: Sequence[IHealthCheck]) -> HealthCheck:
 
 @injectable(lifetime="singleton")
 async def database_engine(settings: DatabaseSettings) -> AsyncIterator[AsyncEngine]:
-  engine = create_async_engine(settings.STOCKLOCK_DATABASE_URL.get_secret_value(), pool_pre_ping=True)
+  engine = create_async_engine(
+    settings.STOCKLOCK_DATABASE_URL.get_secret_value(), pool_pre_ping=True, hide_parameters=True
+  )
 
   try:
     yield engine

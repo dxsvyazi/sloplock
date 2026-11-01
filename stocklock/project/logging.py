@@ -7,6 +7,7 @@ from stocklock.project.configs.logging import LoggingSettings
 
 def logging_config(role: str) -> dict:
   settings = LoggingSettings()
+
   return {
     "version": 1,
     "disable_existing_loggers": False,

@@ -4,9 +4,9 @@ import pytest
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from stocklock.infrastructure.uow import SqlAlchemyUnitOfWork
 from stocklock.infrastructure.exceptions import NoActiveSession, SessionTaskMismatch, TransactionAlreadyActive
 from stocklock.infrastructure.session_manager import SessionManager
+from stocklock.infrastructure.uow import SqlAlchemyUnitOfWork
 from stocklock.shared.exceptions import DynamicException
 
 

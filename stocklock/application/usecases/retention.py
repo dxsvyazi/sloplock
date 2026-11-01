@@ -15,10 +15,10 @@ class CleanupRetentionUseCase:
   clock: IClock
 
   async def execute(self, *, limit: int = 100) -> int:
-    validate_page(limit)
-
     if not self.policy.enabled:
       return 0
+
+    validate_page(limit)
 
     async with self.uow.begin():
       return await self.reservations.purge_terminal(self.policy.cutoffs(await self.clock.now()), limit=limit)

@@ -58,6 +58,7 @@ class ReserveProductUseCase:
         reservation = await self.reservations.create(reservation)
 
     outcome = "reused" if existing is not None else "created"
+
     logger.info(
       f"reservation.{outcome}",
       extra={
@@ -67,6 +68,7 @@ class ReserveProductUseCase:
         "outcome": outcome,
       },
     )
+
     return reservation
 
 
@@ -145,6 +147,7 @@ class CancelReservationUseCase:
         "outcome": "cancelled",
       },
     )
+
     return reservation
 
 
@@ -180,6 +183,7 @@ class ExpireReservationUseCase:
         "outcome": "expired",
       },
     )
+
     return reservation
 
 

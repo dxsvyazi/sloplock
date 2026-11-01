@@ -174,6 +174,6 @@ async def test_nested_api_routers_keep_full_route_template_and_quiet_healthcheck
   root.include_router(health)
   app.include_router(root)
   await invoke(app, "/api/v1/healthcheck", query=b"")
-  record, = summaries(caplog)
+  (record,) = summaries(caplog)
   assert record.route == "/api/v1/healthcheck"
   assert record.levelno == logging.DEBUG

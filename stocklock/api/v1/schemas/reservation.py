@@ -12,9 +12,8 @@ from stocklock.api.v1.schemas.common import (
 )
 from stocklock.domain.validation import validate_idempotency_key
 from stocklock.shared.constraints import MAX_IDEMPOTENCY_KEY_LENGTH
-from stocklock.shared.exceptions import InvalidExpiration
 from stocklock.shared.enums import ProductVisibility
-
+from stocklock.shared.exceptions import InvalidExpiration
 
 IdempotencyKey = Annotated[
   str,

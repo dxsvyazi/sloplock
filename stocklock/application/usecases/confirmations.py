@@ -51,6 +51,7 @@ class ConfirmReservationUseCase:
         "outcome": "reused" if reused else "confirmed",
       },
     )
+
     return confirmation
 
 

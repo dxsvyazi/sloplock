@@ -3,19 +3,19 @@ import asyncio
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from stocklock.application.commands.confirmation import ConfirmReservationCommand, GetConfirmationCommand
 from stocklock.application.commands.product import DeleteProductCommand, GetProductCommand, ListProductsCommand
 from stocklock.application.commands.reservation import CreateReservationCommand
-from stocklock.application.commands.confirmation import ConfirmReservationCommand, GetConfirmationCommand
+from stocklock.application.usecases.confirmations import ConfirmReservationUseCase, GetConfirmationUseCase
 from stocklock.application.usecases.product import DeleteProductUseCase, GetProductUseCase, ListProductsUseCase
 from stocklock.application.usecases.reservation import ReserveProductUseCase
-from stocklock.application.usecases.confirmations import ConfirmReservationUseCase, GetConfirmationUseCase
 from stocklock.domain.errors import ProductHasActiveReservations, ProductNotFound, ReservationNotFound
 from stocklock.infrastructure.repositories.product_repository import ProductRepository
-from stocklock.project.container import create_container
 from stocklock.project.configs.admin import AdminSettings
+from stocklock.project.container import create_container
 from stocklock.shared.enums import DeletionMode, ProductVisibility, ReservationStatus
-from tests.test_retention import seed, remaining
 from tests.test_api import request
+from tests.test_retention import remaining, seed
 
 
 def container_for(database):
@@ -190,12 +190,14 @@ async def test_real_http_deletion_lifecycle(database):
 async def test_deletion_coordinates_with_uncommitted_terminal_transition_without_deadlock(
   database, monkeypatch, mode, transition
 ):
+  from datetime import timedelta
+
+  from sqlalchemy import func, update
+
   from stocklock.application.commands.reservation import CancelReservationCommand, ExpireReservationCommand
   from stocklock.application.usecases.reservation import CancelReservationUseCase, ExpireReservationUseCase
   from stocklock.infrastructure.models.reservation import ReservationORM
   from stocklock.infrastructure.repositories.reservation_repository import ReservationRepository
-  from sqlalchemy import update, func
-  from datetime import timedelta
 
   product, [reservation] = await seed(database, (ReservationStatus.active,))
   if transition == "expire":
@@ -316,8 +318,8 @@ async def test_visibility_filters_apply_before_cursor_pagination(database):
 @pytest.mark.parametrize("mode", list(DeletionMode))
 @pytest.mark.parametrize("operation", ["details", "stock"])
 async def test_edits_racing_deletion_never_modify_deleted_product(database, mode, operation):
-  from stocklock.application.commands.product import UpdateProductCommand, CorrectProductStockCommand
-  from stocklock.application.usecases.product import UpdateProductUseCase, CorrectProductStockUseCase
+  from stocklock.application.commands.product import CorrectProductStockCommand, UpdateProductCommand
+  from stocklock.application.usecases.product import CorrectProductStockUseCase, UpdateProductUseCase
 
   product, _ = await seed(database, ())
   container = container_for(database)
@@ -355,7 +357,9 @@ async def test_edits_racing_deletion_never_modify_deleted_product(database, mode
 
 async def test_hard_deletion_racing_product_cleanup_is_safe(database):
   from datetime import timedelta
-  from sqlalchemy import update, func
+
+  from sqlalchemy import func, update
+
   from stocklock.infrastructure.models.product import ProductORM
   from stocklock.infrastructure.workers.product_cleanup import ProductCleanupWorker
 
@@ -387,18 +391,20 @@ async def test_hard_deletion_racing_product_cleanup_is_safe(database):
 @pytest.mark.parametrize("transition", ["confirm", "cancel", "expire", "bulk_expire", "worker_expire"])
 async def test_active_reservations_finish_after_soft_deletion(database, transition):
   from datetime import timedelta
-  from sqlalchemy import update, func
+
+  from sqlalchemy import func, update
+
   from stocklock.application.commands.reservation import (
     CancelReservationCommand,
     ExpireReservationCommand,
     ExpireReservationsCommand,
   )
-  from stocklock.application.usecases.reservation import CancelReservationUseCase, ExpireReservationUseCase
   from stocklock.application.usecases.expiration import ExpireReservationsUseCase
-  from stocklock.infrastructure.models.reservation import ReservationORM
-  from stocklock.infrastructure.repositories.reservation_repository import ReservationRepository
+  from stocklock.application.usecases.reservation import CancelReservationUseCase, ExpireReservationUseCase
   from stocklock.domain.errors import ReservationUnavailable
   from stocklock.domain.value_objects.product import StockDelta
+  from stocklock.infrastructure.models.reservation import ReservationORM
+  from stocklock.infrastructure.repositories.reservation_repository import ReservationRepository
 
   product, [reservation] = await seed(database, (ReservationStatus.active,))
   if transition in ("expire", "bulk_expire", "worker_expire"):
@@ -484,10 +490,12 @@ async def test_real_http_soft_deletion_with_active_hold(database):
 @pytest.mark.parametrize("bulk", [False, True])
 async def test_failed_stock_return_after_soft_deletion_rolls_back(database, monkeypatch, bulk):
   from datetime import timedelta
-  from sqlalchemy import update, func
+
+  from sqlalchemy import func, update
+
   from stocklock.application.commands.reservation import CancelReservationCommand, ExpireReservationsCommand
-  from stocklock.application.usecases.reservation import CancelReservationUseCase
   from stocklock.application.usecases.expiration import ExpireReservationsUseCase
+  from stocklock.application.usecases.reservation import CancelReservationUseCase
   from stocklock.infrastructure.models.reservation import ReservationORM
   from stocklock.infrastructure.repositories.reservation_repository import ReservationRepository
 

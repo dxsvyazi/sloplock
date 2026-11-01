@@ -29,6 +29,7 @@ async def test_migration_upgrade_matches_models_and_downgrades(database):
 
 async def test_retention_migration_grants_existing_terminal_rows_a_full_window(database):
   from uuid import uuid4
+
   from sqlalchemy import text
 
   product_id = uuid4()

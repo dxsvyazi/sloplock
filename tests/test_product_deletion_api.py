@@ -3,12 +3,13 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from stocklock.application.usecases.product import DeleteProductUseCase, ListProductsUseCase, GetProductUseCase
+from stocklock.application.usecases.product import DeleteProductUseCase, GetProductUseCase, ListProductsUseCase
 from stocklock.application.usecases.reservation import ListReservationsUseCase
 from stocklock.domain.errors import ProductHasActiveReservations, ProductNotFound
 from stocklock.project.configs.admin import AdminSettings
 from stocklock.shared.enums import DeletionMode, ProductVisibility
-from tests.test_api import api as api_fixture, request, PRODUCT
+from tests.test_api import PRODUCT, request
+from tests.test_api import api as api_fixture
 
 api = api_fixture
 

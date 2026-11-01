@@ -11,8 +11,8 @@ from stocklock.api.v1.schemas.common import (
   StockQuantity,
   UTCDateTime,
 )
-from stocklock.shared.exceptions import ValidationException
 from stocklock.shared.enums import ProductVisibility
+from stocklock.shared.exceptions import ValidationException
 
 
 class CreateProductRequest(APISchema):

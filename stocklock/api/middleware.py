@@ -17,13 +17,16 @@ METHODS = frozenset({"GET", "POST", "PATCH", "DELETE", "PUT", "HEAD", "OPTIONS",
 
 def _route_template(scope: Scope) -> str:
   selected = scope.get("route")
+
   # Included FastAPI routers retain the original route in scope. Resolve its
   # effective context to include router prefixes, without logging the raw URL.
   for context in iter_route_contexts(getattr(scope.get("app"), "routes", ())):
     if context.original_route is selected:
       match, _ = context.matches(scope)
+
       if match != Match.NONE:
         return context.path_format or "unmatched"
+
   return getattr(selected, "path_format", "unmatched")
 
 
@@ -33,8 +36,7 @@ class RequestLoggingMiddleware:
 
   async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
     if scope["type"] != "http":
-      await self.app(scope, receive, send)
-      return
+      return await self.app(scope, receive, send)
 
     correlation = str(uuid4())
     token = request_id.set(correlation)
@@ -46,10 +48,12 @@ class RequestLoggingMiddleware:
 
     async def send_response(message: Message) -> None:
       nonlocal status
+
       if message["type"] == "http.response.start":
         status = message["status"]
         headers = [(k, v) for k, v in message.get("headers", []) if k.lower() != b"x-request-id"]
         message = {**message, "headers": [*headers, (b"x-request-id", correlation.encode("ascii"))]}
+
       await send(message)
 
     try:
@@ -66,8 +70,10 @@ class RequestLoggingMiddleware:
         route = _route_template(scope)
         response_status = status if status is not None else (499 if outcome == "cancelled" else 500)
         level = logging.ERROR if outcome == "failed" else logging.INFO
+
         if route == "/api/v1/healthcheck" and response_status == 200 and outcome == "completed":
           level = logging.DEBUG
+
         logger.log(
           level,
           "http.request.completed",

@@ -12,6 +12,7 @@ from stocklock.project.logging import configure_logging
 
 def create_app(*, container: AsyncContainer | None = None) -> FastAPI:
   configure_logging("api")
+
   app = FastAPI(title="StockLock", docs_url="/api/docs")
 
   app.add_middleware(

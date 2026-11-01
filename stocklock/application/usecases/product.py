@@ -86,6 +86,7 @@ class UpdateProductUseCase:
       product = await self.products.save_details(product, original=original)
 
     changed = sorted(name for name in details if getattr(product, name) != getattr(original, name))
+
     logger.info(
       "product.updated",
       extra={
@@ -94,6 +95,7 @@ class UpdateProductUseCase:
         "outcome": "updated" if changed else "unchanged",
       },
     )
+
     return product
 
 
@@ -123,6 +125,7 @@ class CorrectProductStockUseCase:
         "outcome": "corrected" if product.stock_quantity != original.stock_quantity else "unchanged",
       },
     )
+
     return product
 
 

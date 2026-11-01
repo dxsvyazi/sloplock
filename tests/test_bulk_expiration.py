@@ -75,6 +75,7 @@ async def test_bulk_rechecks_status_and_deadline_and_ignores_missing_ids(databas
       await transition(repo, pairs[index][1].id, status, clock=PostgresClock(database.manager))
     # Insert future and confirmed holds via valid entity lifecycle operations.
     from sqlalchemy import update
+
     from stocklock.infrastructure.models.reservation import ReservationORM
 
     now = await PostgresClock(database.manager).now()
@@ -188,6 +189,7 @@ async def test_bulk_cancellation_rolls_back_transitions_and_stock(database, monk
 
 async def test_bulk_stock_overflow_rolls_back(database):
   from sqlalchemy import update
+
   from stocklock.infrastructure.models.product import ProductORM
 
   pairs = await seed(database, count=1)
@@ -204,8 +206,8 @@ async def test_bulk_stock_overflow_rolls_back(database):
 
 @pytest.mark.parametrize("ids", [(), tuple(uuid4() for _ in range(101)), ("invalid",)])
 async def test_bulk_rejects_invalid_identifiers_and_batch_sizes(ids):
-  from tests.service_doubles import Store, Products, Reservations
   from stocklock.application.usecases.expiration import ExpireReservationsUseCase
+  from tests.service_doubles import Products, Reservations, Store
 
   store = Store()
   usecase = ExpireReservationsUseCase(store, ReservationService(Reservations(store)), ProductService(Products(store)))
@@ -216,7 +218,7 @@ async def test_bulk_rejects_invalid_identifiers_and_batch_sizes(ids):
 
 async def test_grouped_stock_returns_use_product_order_without_frameworks():
   from stocklock.domain.entities.product import Product
-  from tests.service_doubles import Store, Products
+  from tests.service_doubles import Products, Store
 
   store = Store()
   products = Products(store)
@@ -248,7 +250,7 @@ async def test_grouped_stock_returns_use_product_order_without_frameworks():
 
 
 async def test_grouped_stock_return_rejects_aggregate_above_stock_limit():
-  from tests.service_doubles import Store, Products
+  from tests.service_doubles import Products, Store
 
   store = Store()
   reservation = Reservation(

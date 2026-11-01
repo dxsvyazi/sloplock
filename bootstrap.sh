@@ -1,3 +1,3 @@
 #!/bin/bash
 
-exec uv run python -m stocklock.project.server
+exec uv run python -m main

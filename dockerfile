@@ -17,7 +17,7 @@ RUN chmod +x "$PYSETUP_PATH/bootstrap.sh"
 
 FROM base AS dev
 
-RUN --mount=type=ssh uv sync --locked --no-dev
+RUN uv sync --locked --no-dev
 
 CMD ["/bin/bash", "bootstrap.sh"]
 
