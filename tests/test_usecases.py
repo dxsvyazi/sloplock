@@ -1,3 +1,5 @@
+import logging
+from contextlib import asynccontextmanager
 from datetime import timedelta
 from importlib import import_module
 from uuid import uuid4
@@ -356,3 +358,124 @@ async def test_cleanup_expiration_skips_missing_ineligible_and_processed_holds(f
   assert await flow.execute(command) is None
   assert store.products[product.id].stock_quantity.value == 5
   assert not store.active
+
+
+async def test_business_events_only_after_commit_and_retries_are_reused(flows, caplog):
+  store, build = flows
+  caplog.set_level(logging.INFO, logger="stocklock")
+
+  class AfterCommit(logging.Handler):
+    def emit(self, record):
+      assert not store.active, "A success event must follow transaction exit"
+
+  handler = AfterCommit()
+  log = logging.getLogger("stocklock")
+  log.addHandler(handler)
+  try:
+    product = await seed(flows)
+    item = await reserve(flows, product.id, key="never-log-this-key")
+    await reserve(flows, product.id, key="never-log-this-key")
+    flow = build("ConfirmReservationUseCase", "reservations", "confirmations")
+    await flow.execute(ConfirmReservationCommand(reservation_id=item.id))
+    await flow.execute(ConfirmReservationCommand(reservation_id=item.id))
+  finally:
+    log.removeHandler(handler)
+  records = [r for r in caplog.records if r.name.startswith("stocklock.application.")]
+  assert [r.getMessage() for r in records] == [
+    "product.created",
+    "reservation.created",
+    "reservation.reused",
+    "reservation.confirmed",
+    "confirmation.reused",
+  ]
+  assert [r.outcome for r in records] == ["created", "created", "reused", "confirmed", "reused"]
+  assert "never-log-this-key" not in str([r.__dict__ for r in records])
+
+
+@pytest.mark.parametrize("operation", ["create", "update", "correct", "reserve", "confirm", "cancel", "expire"])
+async def test_commit_failure_emits_no_success_event(flows, caplog, operation):
+  store, build = flows
+  product = await seed(flows)
+  item = await reserve(flows, product.id)
+  store.now = item.expires_at if operation == "expire" else store.now
+  cases = {
+    "create": (
+      "CreateProductUseCase",
+      ("products",),
+      CreateProductCommand(name="New product", sku="N", stock_quantity=1),
+    ),
+    "update": ("UpdateProductUseCase", ("products",), UpdateProductCommand(product_id=product.id, name="New name")),
+    "correct": (
+      "CorrectProductStockUseCase",
+      ("products",),
+      CorrectProductStockCommand(product_id=product.id, stock_quantity=1),
+    ),
+    "reserve": (
+      "ReserveProductUseCase",
+      ("products", "reservations"),
+      CreateReservationCommand(product_id=product.id, quantity=1, key="new"),
+    ),
+    "confirm": (
+      "ConfirmReservationUseCase",
+      ("reservations", "confirmations"),
+      ConfirmReservationCommand(reservation_id=item.id),
+    ),
+    "cancel": (
+      "CancelReservationUseCase",
+      ("products", "reservations"),
+      CancelReservationCommand(reservation_id=item.id),
+    ),
+    "expire": (
+      "ExpireReservationUseCase",
+      ("products", "reservations"),
+      ExpireReservationCommand(reservation_id=item.id),
+    ),
+  }
+
+  class CommitFailure:
+    @asynccontextmanager
+    async def begin(self):
+      async with store.begin():
+        yield
+        raise RuntimeError("commit failed")
+
+  name, dependencies, command = cases[operation]
+  flow = build(name, *dependencies)
+  flow.uow = CommitFailure()
+  caplog.clear()
+  caplog.set_level(logging.INFO, logger="stocklock")
+  with pytest.raises(RuntimeError, match="commit failed"):
+    await flow.execute(command)
+  assert not [r for r in caplog.records if r.name.startswith("stocklock.application.")]
+
+
+async def test_product_corrections_and_details_log_only_safe_fields(flows, caplog):
+  _, build = flows
+  product = await seed(flows)
+  caplog.clear()
+  caplog.set_level(logging.INFO, logger="stocklock")
+  await build("UpdateProductUseCase", "products").execute(
+    UpdateProductCommand(product_id=product.id, name="secret-product-name")
+  )
+  await build("CorrectProductStockUseCase", "products").execute(
+    CorrectProductStockCommand(product_id=product.id, stock_quantity=8)
+  )
+  details, correction = [r for r in caplog.records if r.name.startswith("stocklock.application.")]
+  assert details.changed_fields == ["name"]
+  assert (correction.previous_stock, correction.stock_quantity) == (5, 8)
+  assert "secret-product-name" not in str([r.__dict__ for r in (details, correction)])
+
+
+@pytest.mark.parametrize("operation,event", [("cancel", "reservation.cancelled"), ("expire", "reservation.expired")])
+async def test_terminal_events_follow_stock_return(flows, caplog, operation, event):
+  store, build = flows
+  product = await seed(flows)
+  item = await reserve(flows, product.id)
+  store.now = item.expires_at
+  caplog.set_level(logging.INFO, logger="stocklock")
+  name = "CancelReservationUseCase" if operation == "cancel" else "ExpireReservationUseCase"
+  command_type = CancelReservationCommand if operation == "cancel" else ExpireReservationCommand
+  await build(name, "products", "reservations").execute(command_type(reservation_id=item.id))
+  (record,) = [r for r in caplog.records if r.getMessage() == event]
+  assert record.reservation_id == item.id and record.quantity == 2
+  assert store.products[product.id].stock_quantity.value == 5

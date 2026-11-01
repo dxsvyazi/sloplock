@@ -1,3 +1,4 @@
+import logging
 from dataclasses import dataclass
 
 from stocklock.application.commands.reservation import (
@@ -17,6 +18,8 @@ from stocklock.domain.ports.repositories.reservation_repository import Reservati
 from stocklock.domain.services.product_service import ProductService
 from stocklock.domain.services.reservation_service import ReservationService
 from stocklock.domain.value_objects.reservation import IdempotencyKey, ReservationQuantity
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -39,20 +42,32 @@ class ReserveProductUseCase:
       existing = await self.reservations.find_retry(command.product_id, key, quantity)
 
       if existing is not None:
-        return existing
+        reservation = existing
+      else:
+        await self.products.hold_stock(command.product_id, quantity)
 
-      await self.products.hold_stock(command.product_id, quantity)
+        created_at = await self.clock.now()
+        reservation = Reservation.create(
+          product_id=command.product_id,
+          quantity=command.quantity,
+          key=command.key,
+          created_at=created_at,
+          expires_at=self.time_policy.expiration_for(created_at),
+        )
 
-      created_at = await self.clock.now()
-      reservation = Reservation.create(
-        product_id=command.product_id,
-        quantity=command.quantity,
-        key=command.key,
-        created_at=created_at,
-        expires_at=self.time_policy.expiration_for(created_at),
-      )
+        reservation = await self.reservations.create(reservation)
 
-      return await self.reservations.create(reservation)
+    outcome = "reused" if existing is not None else "created"
+    logger.info(
+      f"reservation.{outcome}",
+      extra={
+        "product_id": reservation.product_id,
+        "reservation_id": reservation.id,
+        "quantity": reservation.quantity.value,
+        "outcome": outcome,
+      },
+    )
+    return reservation
 
 
 @dataclass(slots=True)
@@ -121,7 +136,16 @@ class CancelReservationUseCase:
 
       await self.products.return_stock(reservation.product_id, reservation.quantity)
 
-      return reservation
+    logger.info(
+      "reservation.cancelled",
+      extra={
+        "product_id": reservation.product_id,
+        "reservation_id": reservation.id,
+        "quantity": reservation.quantity.value,
+        "outcome": "cancelled",
+      },
+    )
+    return reservation
 
 
 @dataclass(slots=True)
@@ -147,7 +171,16 @@ class ExpireReservationUseCase:
 
       await self.products.return_stock(reservation.product_id, reservation.quantity)
 
-      return reservation
+    logger.info(
+      "reservation.expired",
+      extra={
+        "product_id": reservation.product_id,
+        "reservation_id": reservation.id,
+        "quantity": reservation.quantity.value,
+        "outcome": "expired",
+      },
+    )
+    return reservation
 
 
 @dataclass(slots=True)

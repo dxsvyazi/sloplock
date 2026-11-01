@@ -1,6 +1,7 @@
 import uvicorn
 
 from stocklock.project.configs.service import ServiceSettings
+from stocklock.project.logging import logging_config
 
 
 def main() -> None:
@@ -11,6 +12,8 @@ def main() -> None:
     port=settings.SERVICE_PORT,
     factory=True,
     reload=settings.SERVICE_RELOAD,
+    log_config=logging_config("api"),
+    access_log=False,
   )
 
 

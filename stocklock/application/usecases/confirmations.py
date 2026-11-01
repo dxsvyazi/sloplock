@@ -1,3 +1,4 @@
+import logging
 from dataclasses import dataclass
 
 from stocklock.application.commands.confirmation import ConfirmReservationCommand, GetConfirmationCommand
@@ -9,6 +10,8 @@ from stocklock.domain.ports.repositories.reservation_repository import Reservati
 from stocklock.domain.services.confirmation_service import ConfirmationService
 from stocklock.domain.services.reservation_service import ReservationService
 from stocklock.shared.enums import ReservationStatus
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -22,22 +25,33 @@ class ConfirmReservationUseCase:
     async with self.uow.begin():
       reservation = await self.reservations.require(command.reservation_id, for_update=True)
 
-      if reservation.status is ReservationStatus.confirmed:
-        return await self.confirmations.require(reservation.id)
+      reused = reservation.status is ReservationStatus.confirmed
+      if reused:
+        confirmation = await self.confirmations.require(reservation.id)
+      else:
+        original = ReservationSnapshot.capture(reservation)
 
-      original = ReservationSnapshot.capture(reservation)
+        if not reservation.confirm(await self.clock.now()):
+          raise ReservationUnavailable("Reservation is no longer active and unexpired")
 
-      if not reservation.confirm(await self.clock.now()):
-        raise ReservationUnavailable("Reservation is no longer active and unexpired")
+        reservation = await self.reservations.save_transition(reservation, original=original)
 
-      reservation = await self.reservations.save_transition(reservation, original=original)
+        if reservation is None:
+          raise ReservationUnavailable("Reservation is no longer active and unexpired")
 
-      if reservation is None:
-        raise ReservationUnavailable("Reservation is no longer active and unexpired")
+        confirmation = await self.confirmations.create(Confirmation.from_reservation(reservation))
 
-      confirmation = Confirmation.from_reservation(reservation)
-
-      return await self.confirmations.create(confirmation)
+    logger.info(
+      "confirmation.reused" if reused else "reservation.confirmed",
+      extra={
+        "product_id": reservation.product_id,
+        "reservation_id": reservation.id,
+        "confirmation_id": confirmation.id,
+        "quantity": reservation.quantity.value,
+        "outcome": "reused" if reused else "confirmed",
+      },
+    )
+    return confirmation
 
 
 @dataclass(slots=True)

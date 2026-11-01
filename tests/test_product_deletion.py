@@ -175,3 +175,37 @@ async def test_cancellation_returns_stock_after_soft_deletion():
   )
   assert store.products[product.id].stock_quantity.value == 10
   assert store.products[product.id].deleted_at is not None
+
+
+async def test_deletion_events_distinguish_repeated_soft_delete_and_hard_delete(caplog):
+  import logging
+
+  store, product, _, delete = setup()
+  caplog.set_level(logging.INFO, logger="stocklock")
+  await delete.execute(DeleteProductCommand(product_id=product.id))
+  await delete.execute(DeleteProductCommand(product_id=product.id))
+  await delete.execute(DeleteProductCommand(product_id=product.id, mode=DeletionMode.hard))
+  records = [r for r in caplog.records if r.getMessage() == "product.deleted"]
+  assert [(r.mode, r.outcome) for r in records] == [("soft", "deleted"), ("soft", "reused"), ("hard", "deleted")]
+  assert not store.products
+
+
+async def test_failed_deletion_commit_emits_no_success(caplog):
+  import logging
+  from contextlib import asynccontextmanager
+
+  store, product, _, delete = setup()
+
+  class CommitFailure:
+    @asynccontextmanager
+    async def begin(self):
+      async with store.begin():
+        yield
+        raise RuntimeError("commit failed")
+
+  delete.uow = CommitFailure()
+  caplog.set_level(logging.INFO, logger="stocklock")
+  with pytest.raises(RuntimeError, match="commit failed"):
+    await delete.execute(DeleteProductCommand(product_id=product.id))
+  assert store.products[product.id].deleted_at is None
+  assert not any(r.getMessage() == "product.deleted" for r in caplog.records)

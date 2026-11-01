@@ -74,7 +74,8 @@ docker compose --env-file .env -f docker-compose.yml logs -f
 
 Compose waits for database health, runs migrations, and starts the API and all
 three workers. Stop the local API first to avoid competing for its port. The
-container entrypoint currently enables reload and reads `PORT` (default `8000`)
+container entrypoint (`bootstrap.sh` → `python -m stocklock.project.server`)
+currently enables reload and reads `PORT` (default `8000`)
 and `WORKERS` (default `1`); it does not use `main.py`'s `SERVICE_RELOAD` setting.
 Keep `SERVICE_PORT=8000` for the default Compose setup. If changing it, also set
 `PORT` to the same value in `.env` so the listener matches the port mapping.
@@ -325,6 +326,8 @@ reservation deadlines are persisted and do not change with lifetime settings.
 | `SERVICE_HOST` / `SERVICE_PORT` | `0.0.0.0` / `8000` | Local `main.py` listener; Compose also uses the port for mapping |
 | `SERVICE_RELOAD` | `false` | Local `main.py` reload |
 | `SERVICE_SSL` | `false` | Public URL description only; does not configure HTTPS |
+| `LOG_LEVEL` | `INFO` | API/worker verbosity: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` |
+| `LOG_FORMAT` | `text` | Single-line console output: `text` or `json` |
 | `ADMIN_API_TOKEN` | Empty | Shared bearer token for administrative endpoints |
 | `RESERVATION_LIFETIME_SECONDS` | `900` | Lifetime for new holds (15 minutes) |
 | `EXPIRATION_CLEANUP_INTERVAL_SECONDS` | `60` | Expiration sweep interval |
@@ -344,6 +347,66 @@ Durations are whole seconds up to `2147483647`. Intervals, lifetime, batch count
 and timeouts must be positive; batch size is 1–100. Retention durations permit
 `0`, which keeps that history indefinitely or disables automatic product cleanup.
 See [.env.example](.env.example) and [time policies](docs/time-policies.md).
+
+## Operational logging
+
+The API and all three worker CLIs share Python logging configuration. Local and
+container launchers also configure Uvicorn, including its reload supervisor.
+The app factory configures server processes started directly with Uvicorn. Use
+`LOG_FORMAT=json` for structured collection; `text` keeps the same fields readable
+locally. Times use UTC. Logs go to stdout; the hosting environment owns collection,
+access control, rotation and retention. Database history retention does not delete
+external logs. For Compose, view output with `docker compose logs -f stocklock
+expiration retention product-cleanup` and configure bounded runtime log storage.
+
+Each HTTP request gets a new server-generated UUID returned in `X-Request-ID`,
+exposed through CORS. Incoming IDs are ignored. Application records during that
+request include the same ID. One `http.request.completed` record contains method,
+matched route template, status, duration in milliseconds, outcome and reason.
+Unmatched paths use `unmatched`; raw paths, queries, bodies and headers are omitted.
+Successful health checks use DEBUG to keep polling quiet. Business rejections use
+INFO; invalid administrative credentials also produce a WARNING security event.
+Unhandled failures produce an ERROR summary. Cancellation before a response uses
+synthetic status 499 in logs only, without sending a new HTTP response.
+
+Mutation events describe committed product creation/updates, stock corrections,
+deletion and reservation transitions. IDs and quantities provide context; detail
+edits include changed field names rather than values. Corrections include
+`previous_stock` and `stock_quantity` (available stock). Retry outcomes are `reused`;
+they are not new purchases or holds. Success is logged after transaction exit.
+Logging is best effort, so a crash after commit can lose a record: these logs are
+operational evidence, not a durable audit ledger.
+
+Example JSON event (identifiers shortened here for readability):
+
+```json
+{"timestamp":"2026-11-01T09:00:00.000Z","level":"INFO","logger":"stocklock.application.usecases.reservation","role":"api","event":"reservation.created","request_id":"…","product_id":"…","reservation_id":"…","quantity":2,"outcome":"created"}
+```
+
+Workers use fresh `sweep_id` values and report duration, batches, processed,
+changed, skipped and failed counts in `worker.sweep.completed`. Expiration counts
+selected candidates as processed and counts only successful terminal transitions
+as changed. Fallback races count as skipped; failed individual attempts count as
+failed. Cleanup counts committed deletions. An unhandled batch failure adds one
+failure because its affected row count is unknown. Empty completed sweeps use
+DEBUG; partial failure summaries use ERROR. `bounded`, `stopped` and `cancelled`
+outcomes identify sweeps that ended at a limit or interruption.
+
+Uvicorn owns unhandled HTTP exception stack traces; workers own the exceptions they
+catch. Shared formatting keeps exception types and frame locations, excluding
+exception messages, source lines and local values that could contain credentials
+or SQL parameters. This deliberately reduces diagnostic detail. No raw reservation
+keys, bearer tokens, database URLs, or settings dumps are logged. Other dependency
+messages are replaced with `dependency.message` while preserving logger, severity
+and safe exception details. Only known Uvicorn server message templates are shown;
+other Uvicorn messages use `server.message`, including preformatted lifecycle
+failure text. Log access should remain restricted.
+
+Uvicorn's separate access log is disabled in the supplied launchers and suppressed
+by the shared configuration to avoid duplicate request entries. Application
+loggers inherit `LOG_LEVEL`; SQLAlchemy and other dependencies default to WARNING.
+Use DEBUG temporarily for diagnosis. This feature adds no log collector, metrics,
+distributed tracing or guaranteed audit delivery.
 
 ## Workers and retention
 

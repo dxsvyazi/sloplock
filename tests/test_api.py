@@ -270,7 +270,9 @@ async def test_owned_engine_is_disposed_when_app_shuts_down(monkeypatch):
     assert await container.get(AsyncEngine) is engine
     assert await container.get(TimePolicySettings) is await container.get(TimePolicySettings)
     engine.dispose.assert_not_awaited()
-  make_engine.assert_called_once_with(settings.STOCKLOCK_DATABASE_URL.get_secret_value(), pool_pre_ping=True)
+  make_engine.assert_called_once()
+  assert make_engine.call_args.args == (settings.STOCKLOCK_DATABASE_URL.get_secret_value(),)
+  assert make_engine.call_args.kwargs["pool_pre_ping"] is True
   engine.dispose.assert_awaited_once()
 
 

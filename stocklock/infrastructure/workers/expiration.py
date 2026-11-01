@@ -13,8 +13,9 @@ from stocklock.application.usecases.reservation import TryExpireReservationUseCa
 from stocklock.infrastructure.workers.base import BaseWorker
 from stocklock.project.configs.time_policy import TimePolicySettings
 from stocklock.project.container import create_container
+from stocklock.project.logging import configure_logging
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("stocklock.infrastructure.workers.expiration")
 
 
 @dataclass(slots=True)
@@ -39,11 +40,15 @@ class ExpirationWorker(BaseWorker):
       if stop is not None and stop.is_set():
         return
 
+      self.progress.processed += len(ids)
+      self.progress.batches += 1
       try:
         async with asyncio.timeout(self.operation_timeout.total_seconds()):
           async with self.container.enter_scope() as scope:
             expire = await scope.get(ExpireReservationsUseCase)
-            await expire.execute(ExpireReservationsCommand(reservation_ids=tuple(ids)))
+            expired = await expire.execute(ExpireReservationsCommand(reservation_ids=tuple(ids)))
+            self.progress.changed += len(expired)
+            self.progress.skipped += len(ids) - len(expired)
       except Exception:
         logger.exception("Bulk expiration failed; retrying %s reservations individually", len(ids))
         await self._expire_individually(ids, stop=stop)
@@ -63,12 +68,18 @@ class ExpirationWorker(BaseWorker):
         async with asyncio.timeout(self.operation_timeout.total_seconds()):
           async with self.container.enter_scope() as scope:
             expire = await scope.get(TryExpireReservationUseCase)
-            await expire.execute(ExpireReservationCommand(reservation_id=reservation_id))
+            expired = await expire.execute(ExpireReservationCommand(reservation_id=reservation_id))
+            if expired is None:
+              self.progress.skipped += 1
+            else:
+              self.progress.changed += 1
       except Exception:
-        logger.exception("Failed to expire reservation %s", reservation_id)
+        self.progress.failed += 1
+        logger.exception("reservation.expiration.failed", extra={"reservation_id": reservation_id})
 
 
 async def main() -> None:
+  logger.info("worker.started")
   container = create_container()
   stop = asyncio.Event()
   loop = asyncio.get_running_loop()
@@ -86,8 +97,9 @@ async def main() -> None:
       loop.remove_signal_handler(signum)
 
     await container.close()
+    logger.info("worker.stopped")
 
 
 if __name__ == "__main__":
-  logging.basicConfig(level=logging.INFO)
+  configure_logging("expiration")
   asyncio.run(main())

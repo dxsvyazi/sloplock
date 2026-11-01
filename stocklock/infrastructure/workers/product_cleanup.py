@@ -10,8 +10,9 @@ from stocklock.application.usecases.product_cleanup import CleanupProductsUseCas
 from stocklock.infrastructure.workers.base import BaseWorker
 from stocklock.project.configs.time_policy import TimePolicySettings
 from stocklock.project.container import create_container
+from stocklock.project.logging import configure_logging
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("stocklock.infrastructure.workers.product_cleanup")
 
 
 @dataclass(slots=True)
@@ -28,14 +29,16 @@ class ProductCleanupWorker(BaseWorker):
           cleanup = await scope.get(CleanupProductsUseCase)
           deleted = await cleanup.execute(limit=self.batch_size)
 
-      if deleted:
-        logger.info("Deleted %s soft-deleted products without reservations", deleted)
+      self.progress.processed += deleted
+      self.progress.changed += deleted
+      self.progress.batches += 1
 
       if deleted < self.batch_size:
         return
 
 
 async def main() -> None:
+  logger.info("worker.started")
   container = create_container()
   stop = asyncio.Event()
   loop = asyncio.get_running_loop()
@@ -65,8 +68,9 @@ async def main() -> None:
       loop.remove_signal_handler(signum)
 
     await container.close()
+    logger.info("worker.stopped")
 
 
 if __name__ == "__main__":
-  logging.basicConfig(level=logging.INFO)
+  configure_logging("product_cleanup")
   asyncio.run(main())

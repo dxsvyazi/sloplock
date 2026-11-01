@@ -3,12 +3,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from wireup import AsyncContainer
 from wireup.integration.fastapi import setup
 
+from stocklock.api.middleware import RequestLoggingMiddleware
 from stocklock.api.v1.errors import register_error_handlers
 from stocklock.api.v1.router import router
 from stocklock.project.container import create_container
+from stocklock.project.logging import configure_logging
 
 
 def create_app(*, container: AsyncContainer | None = None) -> FastAPI:
+  configure_logging("api")
   app = FastAPI(title="StockLock", docs_url="/api/docs")
 
   app.add_middleware(
@@ -17,7 +20,9 @@ def create_app(*, container: AsyncContainer | None = None) -> FastAPI:
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Request-ID"],
   )
+  app.add_middleware(RequestLoggingMiddleware)
 
   app.include_router(router)
 
